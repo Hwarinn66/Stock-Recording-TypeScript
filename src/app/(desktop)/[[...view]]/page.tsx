@@ -34,6 +34,8 @@ export default async function Page({
   if (key === "locations") return <LocationManager />;
   if (key === "categories") return <LookupsPage kind={key} />;
   if (key === "adjustments") return <AdjustmentsPage />;
+  if (path[0] === "adjustments" && /^\d+$/.test(path[1] || "") && path.length === 2)
+    return <AdjustmentsPage key={path[1]} productId={Number(path[1])} />;
   if (key === "settings") return <SettingsPage />;
   notFound();
 }

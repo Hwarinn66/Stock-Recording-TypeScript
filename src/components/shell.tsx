@@ -35,7 +35,7 @@ const links = [
   ["/low-stock", "Stock Menipis", TriangleAlert],
   ["/categories", "Kategori", Tags],
   ["/locations", "Lokasi Gudang", MapPin],
-  ["/adjustments", "Stock Adjustment", SlidersHorizontal],
+  ["/adjustments", "Koreksi Stok", SlidersHorizontal],
   ["/settings", "Pengaturan", Settings],
 ] as const;
 export function Shell({

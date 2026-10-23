@@ -6,13 +6,20 @@ import { Card } from "@/components/ui/card";
 import { stockLabel } from "@/lib/stock";
 import { livePollSeconds } from "@/hooks/use-live";
 import { RefreshCw } from "lucide-react";
-export function useData<T>(url: string, version = 0) {
+/** `url` null = belum ada yang perlu dimuat (mis. belum memilih barang). */
+export function useData<T>(url: string | null, version = 0) {
   const [data, setData] = useState<T>();
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
   const request = useRef(0);
   const reload = useCallback(async () => {
     const id = ++request.current;
+    if (url === null) {
+      setData(undefined);
+      setError("");
+      setLoading(false);
+      return;
+    }
     try {
       const result = await api<T>(url);
       if (id === request.current) {

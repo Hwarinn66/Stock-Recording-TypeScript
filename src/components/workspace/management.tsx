@@ -3,7 +3,7 @@ import { useState } from "react";
 import { toast } from "sonner";
 import { Download, Plus } from "lucide-react";
 import { write, timestamp } from "@/lib/client";
-import { allowsDecimal, roundStock, validAmount } from "@/lib/stock";
+import { allowsDecimal, correction, type CorrectionMode } from "@/lib/stock";
 import { useLive } from "@/hooks/use-live";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
@@ -11,6 +11,7 @@ import { Input } from "@/components/ui/input";
 import type {
   InventoryProduct,
   Lookup,
+  Product,
   LocationLookup,
   StockTransaction,
 } from "@/types";
@@ -66,7 +67,7 @@ export function HistoryPage({
         ? "Riwayat barang keluar"
         : type === "reservations"
           ? "Nomor reservasi"
-          : "Riwayat adjustment";
+          : "Riwayat koreksi stok";
   return (
     <section>
       {compact ? (
@@ -378,37 +379,78 @@ export function LookupsPage({ kind }: { kind: "categories" }) {
     </>
   );
 }
-export function AdjustmentsPage() {
+const correctionModes: { mode: CorrectionMode; label: string; hint: string }[] = [
+  { mode: "reduce", label: "Kurangi", hint: "Rusak, hilang, kedaluwarsa" },
+  { mode: "add", label: "Tambah", hint: "Ditemukan / kurang dicatat" },
+  { mode: "set", label: "Isi stok fisik", hint: "Hasil hitung stock opname" },
+];
+const quantityLabels: Record<CorrectionMode, string> = {
+  reduce: "3. Jumlah yang dikurangi",
+  add: "3. Jumlah yang ditambah",
+  set: "3. Stok fisik hasil hitung",
+};
+const correctionReasons = [
+  "Rusak",
+  "Hilang",
+  "Kedaluwarsa",
+  "Ditemukan",
+  "Selisih stock opname",
+  "Salah input",
+  "Lainnya",
+];
+const legend = "text-xs font-semibold text-[#526272] mb-1.5";
+function signed(value: number) {
+  return value > 0 ? `+${value}` : String(value);
+}
+export function AdjustmentsPage({ productId }: { productId?: number }) {
   const { version } = useLive();
   const [search, setSearch] = useState("");
   const products = useData<{ items: InventoryProduct[] }>(
     "products?limit=100&q=" + encodeURIComponent(search),
     version,
   );
-  // Simpan ID saja; data barang diambil dari daftar terbaru agar stok sistem ikut realtime.
-  const [selectedId, setSelectedId] = useState<number>();
-  const selected = products.data?.items.find((p) => p.id === selectedId);
-  const [physical, setPhysical] = useState("");
-  const [notes, setNotes] = useState("");
+  const [selectedId, setSelectedId] = useState(productId);
+  // Barang terpilih dimuat langsung agar stok sistem selalu terbaru (ikut update otomatis).
+  const product = useData<Product>(
+    selectedId ? "products/" + selectedId : null,
+    version,
+  );
+  const selected = product.data?.id === selectedId ? product.data : undefined;
+  const [mode, setMode] = useState<CorrectionMode>("reduce");
+  const [quantity, setQuantity] = useState("");
+  const [reason, setReason] = useState("");
+  const [detail, setDetail] = useState("");
   const [busy, setBusy] = useState(false);
   const [revision, setRevision] = useState(0);
-  const amount = Number(physical.replace(",", "."));
   const decimal = allowsDecimal(selected?.unit);
+  const result =
+    selected && quantity.trim() !== ""
+      ? correction(
+          selected.stock,
+          mode,
+          Number(quantity.replace(",", ".")),
+          selected.unit,
+        )
+      : undefined;
+  const preview = result && "after" in result ? result : undefined;
+  const notes = detail.trim() ? `${reason}: ${detail.trim()}` : reason;
+  const needsDetail = reason === "Lainnya" && detail.trim().length < 3;
+  const options = products.data?.items ?? [];
   return (
     <>
       <Heading
-        title="Stock adjustment"
-        description="Koreksi hasil stock opname dengan alasan yang tercatat."
+        title="Koreksi stok"
+        description="Samakan stok di web dengan jumlah barang di gudang, misalnya barang rusak, hilang, atau hasil stock opname."
       />
       <Card className="mb-9">
         <form
-          className="grid lg:grid-cols-2 gap-6"
+          className="grid lg:grid-cols-2 gap-8"
           onSubmit={async (e) => {
             e.preventDefault();
-            if (!selected) return;
+            if (!selected || !preview || !reason || needsDetail) return;
             if (
               !confirm(
-                `Approve adjustment ${selected.name}: ${selected.stock} → ${amount} ${selected.unit}?`,
+                `Simpan koreksi stok?\n\n${selected.sku} · ${selected.name}\nStok: ${selected.stock} → ${preview.after} ${selected.unit} (${signed(preview.delta)})\nAlasan: ${notes}`,
               )
             )
               return;
@@ -417,15 +459,17 @@ export function AdjustmentsPage() {
               await write("adjustments", {
                 product_id: selected.id,
                 expected_stock: selected.stock,
-                physical_stock: amount,
+                physical_stock: preview.after,
                 notes,
               });
-              toast.success("Stock adjustment disimpan");
-              setSelectedId(undefined);
-              setPhysical("");
-              setNotes("");
+              toast.success(
+                `Stok ${selected.sku} dikoreksi: ${selected.stock} → ${preview.after} ${selected.unit}`,
+              );
+              setQuantity("");
+              setReason("");
+              setDetail("");
               setRevision((v) => v + 1);
-              await products.reload();
+              await product.reload();
             } catch (e) {
               toast.error((e as Error).message);
             } finally {
@@ -435,88 +479,140 @@ export function AdjustmentsPage() {
         >
           <div>
             <label htmlFor="adjust-search">
-              Cari barang (nama / Kode Barang / rak)
+              1. Cari barang (nama / Kode Barang / rak)
             </label>
             <Input
               id="adjust-search"
               value={search}
-              onChange={(e) => {
-                setSearch(e.target.value);
-                setSelectedId(undefined);
-              }}
+              onChange={(e) => setSearch(e.target.value)}
               className="mb-3"
             />
             <select
-              aria-label="Pilih barang adjustment"
+              aria-label="Pilih barang"
               className="w-full"
               required
-              value={selected?.id || ""}
-              onChange={(e) =>
-                setSelectedId(Number(e.target.value) || undefined)
-              }
+              value={selectedId ?? ""}
+              onChange={(e) => {
+                setSelectedId(Number(e.target.value) || undefined);
+                setQuantity("");
+              }}
             >
               <option value="">Pilih barang</option>
-              {products.data?.items.map((p) => (
+              {selected && !options.some((p) => p.id === selected.id) && (
+                <option value={selected.id}>
+                  {selected.sku} · {selected.name} · {selected.location_code}
+                </option>
+              )}
+              {options.map((p) => (
                 <option key={p.id} value={p.id}>
                   {p.sku} · {p.name} · {p.location_code}
                 </option>
               ))}
             </select>
-            <State error={products.error} />
+            <State error={products.error || product.error} />
+            {selected && (
+              <div className="bg-slate-50 rounded-lg p-4 mt-4">
+                <p className="font-mono font-bold">{selected.sku}</p>
+                <p className="text-sm">{selected.name}</p>
+                <p className="text-xs text-slate-500 mt-1">
+                  {selected.room_name} · {selected.location_code}
+                </p>
+              </div>
+            )}
             <div className="grid grid-cols-3 bg-slate-50 rounded-lg p-4 mt-4 text-center">
               <div>
-                <p className="text-xs text-slate-500">Stok Sistem</p>
+                <p className="text-xs text-slate-500">Stok sistem</p>
                 <p className="text-xl font-bold mt-2">
                   {selected?.stock ?? "—"}
                 </p>
               </div>
               <div>
-                <p className="text-xs text-slate-500">Stok Fisik</p>
-                <p className="text-xl font-bold mt-2">{physical || "—"}</p>
+                <p className="text-xs text-slate-500">Stok baru</p>
+                <p className="text-xl font-bold mt-2">{preview?.after ?? "—"}</p>
               </div>
               <div>
                 <p className="text-xs text-slate-500">Selisih</p>
-                <p className="text-xl font-bold mt-2">
-                  {selected && physical !== "" ? roundStock(amount - selected.stock) : "—"}
+                <p
+                  className={`text-xl font-bold mt-2 ${preview ? (preview.delta < 0 ? "text-red-600" : "text-emerald-700") : ""}`}
+                >
+                  {preview ? signed(preview.delta) : "—"}
                 </p>
               </div>
             </div>
+            {selected && (
+              <p className="text-xs text-slate-500 mt-2 text-center">
+                Satuan {selected.unit}
+                {decimal ? " · boleh berkoma (maks. 3 angka di belakang koma)" : ""}
+              </p>
+            )}
           </div>
           <div>
-            <label htmlFor="physical">Stok fisik</label>
+            <fieldset className="mb-5">
+              <legend className={legend}>2. Jenis koreksi</legend>
+              <div className="grid grid-cols-3 gap-2">
+                {correctionModes.map((m) => (
+                  <button
+                    key={m.mode}
+                    type="button"
+                    aria-pressed={mode === m.mode}
+                    onClick={() => setMode(m.mode)}
+                    className={`rounded-lg border p-3 text-left ${mode === m.mode ? "border-emerald-600 bg-emerald-50" : "border-slate-200 bg-white"}`}
+                  >
+                    <span className="block text-sm font-semibold">{m.label}</span>
+                    <span className="block text-[11px] text-slate-500 mt-0.5">
+                      {m.hint}
+                    </span>
+                  </button>
+                ))}
+              </div>
+            </fieldset>
+            <label htmlFor="correction-quantity">{quantityLabels[mode]}</label>
             <Input
-              id="physical"
+              id="correction-quantity"
               type="number"
               min="0"
               max="2147483647"
               step={decimal ? "0.001" : "1"}
               inputMode={decimal ? "decimal" : "numeric"}
               required
-              value={physical}
-              onChange={(e) => setPhysical(e.target.value)}
-              className="mb-4"
+              value={quantity}
+              onChange={(e) => setQuantity(e.target.value)}
             />
-            <label htmlFor="notes">Alasan adjustment (wajib)</label>
+            {result && "error" in result && (
+              <p className="text-sm text-red-600 mt-2">{result.error}</p>
+            )}
+            <fieldset className="mt-5">
+              <legend className={legend}>4. Alasan (wajib)</legend>
+              <div className="flex flex-wrap gap-2 mb-3">
+                {correctionReasons.map((r) => (
+                  <button
+                    key={r}
+                    type="button"
+                    aria-pressed={reason === r}
+                    onClick={() => setReason(r)}
+                    className={`rounded-full border px-3 py-1 text-xs ${reason === r ? "border-emerald-700 bg-emerald-700 text-white" : "border-slate-300 bg-white"}`}
+                  >
+                    {r}
+                  </button>
+                ))}
+              </div>
+            </fieldset>
+            <label htmlFor="correction-detail">
+              Keterangan {reason === "Lainnya" ? "(wajib)" : "(opsional)"}
+            </label>
             <textarea
-              id="notes"
-              required
-              minLength={3}
-              maxLength={2000}
-              value={notes}
-              onChange={(e) => setNotes(e.target.value)}
+              id="correction-detail"
+              maxLength={1900}
+              placeholder="mis. 3 pcs pecah saat bongkar muat"
+              value={detail}
+              onChange={(e) => setDetail(e.target.value)}
               className="w-full"
             />
             <Button
               className="mt-4"
-              disabled={
-                busy ||
-                !selected ||
-                physical === "" ||
-                !validAmount(amount, selected.unit) ||
-                amount < 0
-              }
+              disabled={busy || !preview || !reason || needsDetail}
             >
-              {busy ? "Memproses…" : "Approve Adjustment"}
+              {busy ? "Menyimpan…" : "Simpan koreksi"}
             </Button>
           </div>
         </form>

@@ -1,7 +1,7 @@
 import { locationCode } from "../src/services/locations";
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { allowsDecimal, calculateStock, stockLabel } from "../src/lib/stock";
+import { allowsDecimal, calculateStock, correction, stockLabel } from "../src/lib/stock";
 import { quantitySchema, scanSchema, productSchema } from "../src/validators";
 import { dateBoundary, csv } from "../src/services/reports";
 test("IN and OUT arithmetic; stock never negative", () => {
@@ -30,6 +30,23 @@ test("only Kg items may use decimals (max 3), without rounding", () => {
   assert.equal(calculateStock(1159.53, 1159.53, "OUT", "Kg"), 0);
   assert.throws(() => calculateStock(1, 1.5, "OUT", "Kg"), { code: "STOCK_NOT_ENOUGH" });
   assert.equal(quantitySchema.safeParse(2.125).success, true);
+});
+test("stock correction: reduce/add/set, Kg decimals exact, invalid amounts rejected", () => {
+  assert.deepEqual(correction(10, "reduce", 3, "Pcs"), { after: 7, delta: -3 });
+  assert.deepEqual(correction(10, "add", 2, "Pcs"), { after: 12, delta: 2 });
+  assert.deepEqual(correction(10, "set", 0, "Pcs"), { after: 0, delta: -10 });
+  assert.deepEqual(correction(548.8, "reduce", 0.3, "Kg"), { after: 548.5, delta: -0.3 });
+  assert.deepEqual(correction(0.1, "add", 0.2, "Kg"), { after: 0.3, delta: 0.2 });
+  for (const [mode, amount, unit] of [
+    ["reduce", 11, "Pcs"],
+    ["reduce", 0, "Pcs"],
+    ["add", 1.5, "Pcs"],
+    ["add", 0.0005, "Kg"],
+    ["set", -1, "Pcs"],
+    ["set", 10, "Pcs"],
+    ["add", 2147483647, "Pcs"],
+  ] as const)
+    assert.ok("error" in correction(10, mode, amount, unit), `${mode} ${amount} ${unit}`);
 });
 test("stock flags", () => {
   assert.equal(stockLabel(0), "STOK HABIS");

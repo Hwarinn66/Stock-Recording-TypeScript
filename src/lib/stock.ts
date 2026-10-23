@@ -41,6 +41,30 @@ export function calculateStock(
     throw new AppError("STOCK_OVERFLOW", "Stok melampaui batas sistem.");
   return after;
 }
+/** Koreksi stok: kurangi (rusak/hilang), tambah (ditemukan), atau isi stok fisik. */
+export type CorrectionMode = "reduce" | "add" | "set";
+export function correction(
+  stock: number,
+  mode: CorrectionMode,
+  amount: number,
+  unit: string | null | undefined,
+): { after: number; delta: number } | { error: string } {
+  if (!validAmount(amount, unit) || amount < 0 || (mode !== "set" && amount === 0))
+    return {
+      error: allowsDecimal(unit)
+        ? "Isi jumlah lebih dari 0 (maks. 3 angka di belakang koma)."
+        : "Isi jumlah bilangan bulat lebih dari 0.",
+    };
+  if (mode === "reduce" && amount > stock)
+    return { error: `Tidak bisa mengurangi lebih dari stok sistem (${stock}).` };
+  const after =
+    mode === "set"
+      ? amount
+      : roundStock(mode === "add" ? stock + amount : stock - amount);
+  if (after > MAX_QUANTITY) return { error: "Stok melampaui batas sistem." };
+  if (after === stock) return { error: "Stok baru sama dengan stok sistem." };
+  return { after, delta: roundStock(after - stock) };
+}
 export function stockLabel(stock: number) {
   return stock === 0 ? "STOK HABIS" : stock <= 2 ? "STOK MENIPIS" : "AMAN";
 }

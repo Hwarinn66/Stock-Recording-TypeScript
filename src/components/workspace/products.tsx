@@ -278,6 +278,9 @@ export function ProductsPage({ low = false }: { low?: boolean }) {
                       <div className="flex gap-3 text-xs text-emerald-700">
                         <Link href={"/products/" + p.id}>Detail</Link>
                         <Link href={`/products/${p.id}/edit`}>Edit</Link>
+                        {!!p.active && (
+                          <Link href={`/adjustments/${p.id}`}>Koreksi stok</Link>
+                        )}
                         <Link
                           aria-label={"QR " + p.name}
                           href={`/products/${p.id}/qr`}
@@ -565,7 +568,7 @@ export function ProductForm({ id }: { id?: number }) {
               </div>
             </div>
             <div className="mt-5 p-4 rounded-lg bg-emerald-50 text-emerald-800 text-xs">
-              Stok dikelola melalui IN, OUT, atau Stock Adjustment. QR unik
+              Stok dikelola melalui IN, OUT, atau Koreksi Stok. QR unik
               dibuat otomatis saat barang disimpan.
             </div>
             <div className="mt-6 flex gap-3 justify-end">
@@ -628,6 +631,11 @@ export function ProductDetail({
         title={qrOnly ? "QR barang" : p.name}
         description={`${p.sku} · ${p.room_name} · ${p.location_code}`}
       >
+        {!!p.active && (
+          <Button variant="outline" asChild>
+            <Link href={`/adjustments/${id}`}>Koreksi Stok</Link>
+          </Button>
+        )}
         <Button variant="outline" asChild>
           <Link href={`/products/${id}/edit`}>Edit Barang</Link>
         </Button>
