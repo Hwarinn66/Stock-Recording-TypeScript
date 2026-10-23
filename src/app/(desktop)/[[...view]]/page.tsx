@@ -30,6 +30,7 @@ export default async function Page({
   }
   if (key === "history/in") return <HistoryPage type="in" />;
   if (key === "history/out") return <HistoryPage type="out" />;
+  if (key === "reservations") return <HistoryPage type="reservations" />;
   if (key === "locations") return <LocationManager />;
   if (key === "categories") return <LookupsPage kind={key} />;
   if (key === "adjustments") return <AdjustmentsPage />;

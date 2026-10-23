@@ -279,12 +279,67 @@ try {
       .total,
     1,
   );
+  // Aplikasi scanner HP: client nonbrowser tanpa Origin; stok langsung berubah.
+  const mobile = (path: string, method = "GET", body?: unknown) =>
+    fetch(base + "/api/" + path, {
+      method,
+      headers: { "Content-Type": "application/json", Cookie: cookie },
+      body: body === undefined ? undefined : JSON.stringify(body),
+    });
+  const qr_token = product.qr_token;
+  const found = await (await mobile(`scan/${qr_token}?mode=OUT`)).json();
+  assert.equal(found.data.stock, 10);
+  assert.equal("image" in found.data, false);
+  assert.equal((await mobile("scan/not-a-uuid?mode=IN")).status, 422);
+  assert.equal(
+    (await mobile("transactions", "POST", { qr_token, mode: "OUT", quantity: 2 }))
+      .status,
+    422,
+    "OUT tanpa no reservasi ditolak",
+  );
+  assert.equal(
+    (
+      await mobile("transactions", "POST", {
+        qr_token,
+        mode: "IN",
+        quantity: 1,
+        reservation_number: "1234567",
+      })
+    ).status,
+    422,
+    "IN tidak memakai no reservasi",
+  );
+  const recorded = await (
+    await mobile("transactions", "POST", {
+      qr_token,
+      mode: "OUT",
+      quantity: 4,
+      reservation_number: "0012345",
+    })
+  ).json();
+  assert.equal(recorded.data.stock_after, 6);
+  assert.equal(
+    (await (await request("products/" + product.id)).json()).data.stock,
+    6,
+  );
+  const reservations = await (
+    await request("history/reservations?q=0012345")
+  ).json();
+  assert.equal(reservations.data.items[0].reservation_number, "0012345");
+  assert.equal(reservations.data.items[0].actor_name, username);
+  const reservationCsv = await (
+    await request("history/reservations?export=csv&q=0012345")
+  ).text();
+  assert.ok(
+    reservationCsv.split("\r\n")[0].includes('"reservation_number","transaction_number"'),
+  );
+  assert.ok(reservationCsv.includes('"0012345"'));
   const dashboard = await request("dashboard");
   assert.equal(dashboard.status, 200);
   await request("auth/logout", "POST", {});
   assert.equal((await request("products")).status, 401);
   console.log(
-    "PASS: authenticated HTTP API, CSRF, validation, QR SVG, scan → SSE → quantity → approve → stock/history/CSV, session revocation.",
+    "PASS: authenticated HTTP API, CSRF, validation, QR SVG, scan → SSE → quantity → approve → stock/history/CSV, mobile lookup → record + reservation, session revocation.",
   );
 } finally {
   await db.end();

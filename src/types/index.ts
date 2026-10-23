@@ -4,7 +4,7 @@ export interface Product {
   name: string;
   category_id: number;
   category_name: string;
-  movement_class: "FAST" | "SLOW" | null;
+  movement_class: "FAST" | "SLOW" | "DEAD" | null;
   unit: string;
   stock: number;
   location_id: number;
@@ -39,6 +39,8 @@ export interface StockTransaction {
   approved_at: string | null;
   cancelled_at: string | null;
   notes: string | null;
+  reservation_number: string | null;
+  actor_name: string | null;
   name: string;
   sku: string;
   unit: string;
@@ -65,6 +67,7 @@ export interface LocationLookup extends Lookup {
   legacy_code?: string | null;
 }
 
-export interface InventoryProduct extends Product {
+// Baris daftar barang: tanpa foto agar respons tetap kecil.
+export interface InventoryProduct extends Omit<Product, "image"> {
   out_total: number;
 }

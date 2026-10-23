@@ -4,6 +4,7 @@ import { api } from "@/lib/client";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { stockLabel } from "@/lib/stock";
+import { livePollSeconds } from "@/hooks/use-live";
 import { RefreshCw } from "lucide-react";
 export function useData<T>(url: string, version = 0) {
   const [data, setData] = useState<T>();
@@ -147,7 +148,13 @@ export function Live({ connected }: { connected: boolean }) {
       <span
         className={`size-2 rounded-full ${connected ? "bg-emerald-500" : "bg-amber-500"}`}
       />
-      {connected ? "Realtime aktif" : "Menyambung / polling 5s"}
+      {livePollSeconds
+        ? connected
+          ? `Update otomatis tiap ${livePollSeconds} detik`
+          : "Menyambung ulang…"
+        : connected
+          ? "Realtime aktif"
+          : "Menyambung / polling 5s"}
     </span>
   );
 }

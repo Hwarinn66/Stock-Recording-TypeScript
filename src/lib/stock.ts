@@ -1,13 +1,33 @@
 import { AppError } from "./errors";
+export const MAX_QUANTITY = 2147483647;
+export const STOCK_DECIMALS = 3;
+/** Barang satuan Kg boleh berkoma (mis. 548,8 Kg); satuan lain bilangan bulat. */
+export function allowsDecimal(unit: string | null | undefined) {
+  return (unit ?? "").replace(/\s+/g, "").toLowerCase() === "kg";
+}
+/** Hilangkan galat floating point (0.1+0.2) sesuai presisi kolom DECIMAL(15,3). */
+export function roundStock(value: number) {
+  return Math.round(value * 10 ** STOCK_DECIMALS) / 10 ** STOCK_DECIMALS;
+}
+/** Jumlah sah untuk satuan ini: bulat, atau maks. 3 desimal bila satuan Kg. */
+export function validAmount(value: number, unit: string | null | undefined) {
+  if (!Number.isFinite(value)) return false;
+  return allowsDecimal(unit)
+    ? Math.abs(value - roundStock(value)) < 1e-9
+    : Number.isInteger(value);
+}
 export function calculateStock(
   stock: number,
   quantity: number,
   type: "IN" | "OUT",
+  unit = "Pcs",
 ) {
-  if (!Number.isInteger(quantity) || quantity <= 0 || quantity > 2147483647)
+  if (!validAmount(quantity, unit) || quantity <= 0 || quantity > MAX_QUANTITY)
     throw new AppError(
       "INVALID_QUANTITY",
-      "Quantity harus bilangan bulat lebih besar dari 0.",
+      allowsDecimal(unit)
+        ? "Quantity harus lebih besar dari 0 (maks. 3 angka di belakang koma)."
+        : "Quantity harus bilangan bulat lebih besar dari 0.",
     );
   if (type === "OUT" && stock < quantity)
     throw new AppError(
@@ -16,8 +36,8 @@ export function calculateStock(
       409,
       { stock, quantity },
     );
-  const after = type === "IN" ? stock + quantity : stock - quantity;
-  if (after > 2147483647)
+  const after = roundStock(type === "IN" ? stock + quantity : stock - quantity);
+  if (after > MAX_QUANTITY)
     throw new AppError("STOCK_OVERFLOW", "Stok melampaui batas sistem.");
   return after;
 }

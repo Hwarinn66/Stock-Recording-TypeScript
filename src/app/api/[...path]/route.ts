@@ -41,6 +41,19 @@ async function handler(req: Request, { params }: Context) {
       return ok(user);
     const filter = () =>
       schemas.listSchema.parse(Object.fromEntries(url.searchParams));
+    // Aplikasi scanner HP: cek barang dari QR, lalu kirim jumlah (+ no reservasi untuk OUT).
+    if (resource === "scan" && key && method === "GET") {
+      const token = schemas.qrTokenSchema.parse(key);
+      const { mode } = schemas.lookupSchema.parse(
+        Object.fromEntries(url.searchParams),
+      );
+      return ok(await stock.lookup(token, mode));
+    }
+    if (resource === "transactions" && !key && method === "POST")
+      return ok(
+        await stock.record(schemas.recordSchema.parse(await body()), user.id),
+        "Transaksi tersimpan. Stok sudah diperbarui.",
+      );
     if (resource === "scan" && method === "POST") {
       const input = schemas.scanSchema.parse(await body());
       return ok(
@@ -141,32 +154,47 @@ async function handler(req: Request, { params }: Context) {
     if (
       resource === "history" &&
       method === "GET" &&
-      ["in", "out", "adjustments"].includes(key)
+      ["in", "out", "adjustments", "reservations"].includes(key)
     ) {
+      // "reservations" = barang keluar yang memiliki no reservasi.
+      const reservations = key === "reservations";
       const f = filter(),
-        type = key === "adjustments" ? "ADJUSTMENT" : key.toUpperCase(),
-        result = await history(type, f);
+        type =
+          key === "adjustments"
+            ? "ADJUSTMENT"
+            : reservations
+              ? "OUT"
+              : key.toUpperCase(),
+        result = await history(type, f, reservations);
+      const columns = [
+        "transaction_number",
+        "scanned_at",
+        "approved_at",
+        "cancelled_at",
+        "kode_barang",
+        "name",
+        "location_code",
+        "room_name",
+        "quantity",
+        "stock_before",
+        "stock_after",
+        "status",
+        "reservation_number",
+        "actor_name",
+        "notes",
+      ];
       return f.export
         ? csv(
             result.items.map((item) => ({
               ...item,
               kode_barang: item.sku,
             })) as unknown as Record<string, unknown>[],
-            [
-              "transaction_number",
-              "scanned_at",
-              "approved_at",
-              "cancelled_at",
-              "kode_barang",
-              "name",
-              "location_code",
-              "room_name",
-              "quantity",
-              "stock_before",
-              "stock_after",
-              "status",
-              "notes",
-            ],
+            reservations
+              ? [
+                  "reservation_number",
+                  ...columns.filter((c) => c !== "reservation_number"),
+                ]
+              : columns,
             "riwayat-" + key,
           )
         : ok(result);

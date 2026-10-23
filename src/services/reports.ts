@@ -2,9 +2,9 @@ import { hierarchyJoins } from "./locations";
 import { z } from "zod";
 import { rows } from "@/lib/db";
 import { listSchema, productListSchema } from "@/validators";
-import { productSelect } from "./products";
+import { productListSelect } from "./products";
 import { transactionSelect } from "./transactions";
-import type { Product, InventoryProduct, StockTransaction } from "@/types";
+import type { InventoryProduct, StockTransaction } from "@/types";
 type Filters = z.infer<typeof listSchema>;
 export async function listProducts(f: z.infer<typeof productListSchema>) {
   // OUT totals support a separate ranking only; manual labels never depend on them.
@@ -58,6 +58,10 @@ export async function listProducts(f: z.infer<typeof productListSchema>) {
     where.push("p.movement_class=?");
     args.push("SLOW");
   }
+  if (f.sort === "dead") {
+    where.push("p.movement_class=?");
+    args.push("DEAD");
+  }
   if (f.sort === "unlabelled") where.push("p.movement_class IS NULL");
   const clause = " WHERE " + where.join(" AND ");
   const direction =
@@ -72,8 +76,9 @@ export async function listProducts(f: z.infer<typeof productListSchema>) {
     location: `rm.name ${direction},b.code ${direction},r.rack_number ${direction},l.position_number ${direction},p.name ASC`,
     fast: "p.name ASC",
     slow: "p.name ASC",
+    dead: "p.name ASC",
     movement:
-      "CASE p.movement_class WHEN 'FAST' THEN 0 WHEN 'SLOW' THEN 1 ELSE 2 END ASC,p.name ASC",
+      "CASE p.movement_class WHEN 'FAST' THEN 0 WHEN 'SLOW' THEN 1 WHEN 'DEAD' THEN 2 ELSE 3 END ASC,p.name ASC",
     unlabelled: "p.name ASC",
   };
   const queryArgs = args;
@@ -85,9 +90,9 @@ export async function listProducts(f: z.infer<typeof productListSchema>) {
     queryArgs,
   );
   const items = await rows<InventoryProduct>(
-    productSelect.replace(
-      "SELECT p.*,",
-      "SELECT p.*,COALESCE(mv.out_total,0) out_total,",
+    productListSelect.replace(
+      "SELECT ",
+      "SELECT COALESCE(mv.out_total,0) out_total,",
     ) +
       movementJoin +
       clause +
@@ -130,14 +135,19 @@ export function dateBoundary(day: string, next = false) {
   }
   return new Date(utc).toISOString().slice(0, 19).replace("T", " ");
 }
-export async function history(type: string, f: Filters) {
+export async function history(
+  type: string,
+  f: Filters,
+  reservationsOnly = false,
+) {
   const where = ["t.transaction_type=?"];
   const args: unknown[] = [type];
+  if (reservationsOnly) where.push("t.reservation_number IS NOT NULL");
   if (f.q) {
     where.push(
-      "(p.name LIKE ? OR p.sku LIKE ? OR t.location_code LIKE ? OR t.transaction_number LIKE ? OR t.room_name LIKE ?)",
+      "(p.name LIKE ? OR p.sku LIKE ? OR t.location_code LIKE ? OR t.transaction_number LIKE ? OR t.room_name LIKE ? OR t.reservation_number LIKE ?)",
     );
-    args.push(...Array(5).fill(`%${f.q}%`));
+    args.push(...Array(6).fill(`%${f.q}%`));
   }
   if (f.product_id) {
     where.push("t.product_id=?");
@@ -160,7 +170,7 @@ export async function history(type: string, f: Filters) {
     args.push(dateBoundary(f.to, true));
   }
   const clause = " WHERE " + where.join(" AND ");
-  const sorts: Record<string, string> = {
+  const sorts: Record<Filters["sort"], string> = {
     id: "t.id",
     scanned_at: "t.scanned_at",
     approved_at: "t.approved_at",
@@ -175,7 +185,7 @@ export async function history(type: string, f: Filters) {
   const items = await rows<StockTransaction>(
     transactionSelect +
       clause +
-      ` ORDER BY ${sorts[f.sort] || "t.id"} ${f.direction},t.id ${f.export ? "" : `LIMIT ${f.limit} OFFSET ${(f.page - 1) * f.limit}`}`,
+      ` ORDER BY ${sorts[f.sort]} ${f.direction},t.id ${f.export ? "" : `LIMIT ${f.limit} OFFSET ${(f.page - 1) * f.limit}`}`,
     args,
   );
   return { items, total, page: f.page, limit: f.limit };
@@ -192,8 +202,14 @@ export async function dashboard() {
   const [products] = await rows(
     "SELECT COUNT(*) total_products,COALESCE(SUM(stock),0) total_stock,COALESCE(SUM(stock<=2 AND stock>0),0) low_stock,COALESCE(SUM(stock=0),0) zero_stock FROM products WHERE active=1",
   );
+  // Subquery terpisah agar masing-masing memakai index (approved_at, status, scanned_at)
+  // dan tidak membaca seluruh histori setiap kali dashboard dimuat ulang.
   const [trans] = await rows(
-    "SELECT COALESCE(SUM(CASE WHEN transaction_type='IN' AND status='APPROVED' AND approved_at>=? AND approved_at<? THEN quantity ELSE 0 END),0) incoming,COALESCE(SUM(CASE WHEN transaction_type='OUT' AND status='APPROVED' AND approved_at>=? AND approved_at<? THEN quantity ELSE 0 END),0) outgoing,COALESCE(SUM(status='PENDING'),0) pending,COALESCE(SUM(scanned_at>=? AND scanned_at<?),0) today FROM stock_transactions",
+    `SELECT
+      (SELECT COALESCE(SUM(quantity),0) FROM stock_transactions WHERE approved_at>=? AND approved_at<? AND transaction_type='IN' AND status='APPROVED') incoming,
+      (SELECT COALESCE(SUM(quantity),0) FROM stock_transactions WHERE approved_at>=? AND approved_at<? AND transaction_type='OUT' AND status='APPROVED') outgoing,
+      (SELECT COUNT(*) FROM stock_transactions WHERE status='PENDING') pending,
+      (SELECT COUNT(*) FROM stock_transactions WHERE scanned_at>=? AND scanned_at<?) today`,
     [from, to, from, to, from, to],
   );
   return { ...products, ...trans };
@@ -205,7 +221,8 @@ export function csv(
 ) {
   const cell = (value: unknown) => {
     let s = value == null ? "" : String(value);
-    if (/^[=+\-@\t\r]/.test(s)) s = "'" + s;
+    // Angka (mis. selisih adjustment -5) aman; hanya teks berawalan formula yang di-escape.
+    if (typeof value !== "number" && /^[=+\-@\t\r]/.test(s)) s = "'" + s;
     return '"' + s.replaceAll('"', '""') + '"';
   };
   const body =

@@ -12,7 +12,12 @@ import {
   approve,
   cancel,
   adjustment,
+  lookup,
+  record,
 } from "../../src/services/transactions";
+import { history } from "../../src/services/reports";
+import { importProducts, readProductRows } from "../../src/services/product-import";
+import { listSchema } from "../../src/validators";
 // Only run on a disposable database whose name ends in _test. Import schema first.
 if (!process.env.DB_NAME?.endsWith("_test"))
   throw new Error("Integration tests require DB_NAME ending in _test");
@@ -355,4 +360,212 @@ test("end-to-end SQL inventory and concurrency", async (t) => {
       });
     },
   );
+});
+
+test("mobile scanner: direct stock change with reservation number", async (t) => {
+  await editProduct(product, { active: true });
+  const transactions = async () =>
+    (await rows("SELECT id FROM stock_transactions")).length;
+  await t.test("lookup returns product without photo", async () => {
+    const found = await lookup(token, "IN");
+    assert.equal(found.id, product);
+    assert.equal(found.stock, 8);
+    assert.equal("image" in found, false);
+  });
+  await t.test("IN changes stock immediately, no reservation", async () => {
+    const r = await record({ qr_token: token, mode: "IN", quantity: 5 }, user);
+    assert.equal(r.stock_before, 8);
+    assert.equal(r.stock_after, 13);
+    assert.equal((await p()).stock, 13);
+    const [tx] = await rows<{
+      status: string;
+      quantity: number;
+      reservation_number: string | null;
+      approved_at: string | null;
+    }>("SELECT * FROM stock_transactions WHERE id=?", [r.id]);
+    assert.equal(tx.status, "APPROVED");
+    assert.equal(tx.quantity, 5);
+    assert.equal(tx.reservation_number, null);
+    assert.ok(tx.approved_at);
+  });
+  await t.test("OUT stores reservation with leading zeros", async () => {
+    const r = await record(
+      {
+        qr_token: token,
+        mode: "OUT",
+        quantity: 3,
+        reservation_number: "0012345",
+      },
+      user,
+    );
+    assert.equal((await p()).stock, 10);
+    assert.equal(r.reservation_number, "0012345");
+    const found = await history(
+      "OUT",
+      listSchema.parse({ q: "0012345" }),
+      true,
+    );
+    assert.equal(found.total, 1);
+    assert.equal(found.items[0].reservation_number, "0012345");
+    assert.equal(found.items[0].actor_name, "test");
+    // Riwayat reservasi hanya berisi OUT yang memiliki no reservasi.
+    const all = await history("OUT", listSchema.parse({}), true);
+    assert.ok(all.items.every((item) => item.reservation_number));
+  });
+  await t.test("OUT above stock rejected and nothing recorded", async () => {
+    const before = await transactions();
+    await assert.rejects(
+      record(
+        {
+          qr_token: token,
+          mode: "OUT",
+          quantity: 999,
+          reservation_number: "1234567",
+        },
+        user,
+      ),
+      { code: "STOCK_NOT_ENOUGH" },
+    );
+    assert.equal((await p()).stock, 10);
+    assert.equal(await transactions(), before);
+  });
+  await t.test("concurrent OUT never drives stock negative", async () => {
+    const results = await Promise.allSettled([
+      record(
+        { qr_token: token, mode: "OUT", quantity: 6, reservation_number: "1111111" },
+        user,
+      ),
+      record(
+        { qr_token: token, mode: "OUT", quantity: 6, reservation_number: "2222222" },
+        user,
+      ),
+    ]);
+    assert.equal(results.filter((r) => r.status === "fulfilled").length, 1);
+    assert.equal((await p()).stock, 4);
+  });
+  await t.test("empty stock and legacy pending block the scanner", async () => {
+    await adjustment(
+      { product_id: product, expected_stock: 4, physical_stock: 0, notes: "opname" },
+      user,
+    );
+    await assert.rejects(lookup(token, "OUT"), { code: "STOCK_EMPTY" });
+    const pending = await scan(token, "IN", user);
+    await assert.rejects(lookup(token, "IN"), { code: "PRODUCT_PENDING" });
+    await assert.rejects(
+      record({ qr_token: token, mode: "IN", quantity: 1 }, user),
+      { code: "PRODUCT_PENDING" },
+    );
+    await cancel(pending.id);
+    await editProduct(product, { active: false });
+    await assert.rejects(lookup(token, "IN"), { code: "PRODUCT_INACTIVE" });
+    await assert.rejects(
+      record({ qr_token: token, mode: "IN", quantity: 1 }, user),
+      { code: "PRODUCT_INACTIVE" },
+    );
+  });
+});
+
+test("CSV import: ERP location, movement label and exact Kg decimals", async (t) => {
+  const csv = (lines: string[]) =>
+    readProductRows(["lokasi2,nobar,nabar,satuan,stock_type,saldoakhir", ...lines].join("\n"), "Import Test").items;
+  const count = async () => (await rows("SELECT id FROM products")).length;
+  type Placed = {
+    id: number;
+    qr_token: string;
+    name: string;
+    unit: string;
+    stock: number;
+    movement_class: string | null;
+    code: string;
+    position_number: number;
+    rack_number: number;
+    block: string;
+    room: string;
+  };
+  const placed = async (sku: string) =>
+    (
+      await rows<Placed>(
+        "SELECT p.id,p.qr_token,p.name,p.unit,p.stock,p.movement_class,l.code,l.position_number,r.rack_number,b.code block,rm.name room FROM products p JOIN locations l ON l.id=p.location_id JOIN racks r ON r.id=l.rack_id JOIN blocks b ON b.id=r.block_id JOIN rooms rm ON rm.id=b.room_id WHERE p.sku=?",
+        [sku],
+      )
+    )[0];
+  const items = csv([
+    `B.02.01.001,IMP-KG,"WIRE;ROPE;Ø5/8"";${"X".repeat(150)}",K g,DEAD STOCK,548.8`,
+    "B.06.10.030,IMP-A,Filter A,Pcs,SLOW MOVING,2",
+    "B.06.10.030,IMP-B,Filter B,Pcs,FAST MOVING,0",
+    "POLE FACTORY,IMP-POLE,Concrete steel,Btg,SLOW MOVING,5",
+    ",IMP-NOLOC,Tanpa lokasi,Pcs,,1",
+    "A.01.01.002,SLOT-2,Keyboard,PCS,FAST MOVING,7",
+  ]);
+  await t.test("dry run reads only", async () => {
+    const before = await count();
+    const summary = await importProducts(items, false);
+    assert.equal(summary.created, 5);
+    assert.equal(summary.updated, 1);
+    assert.equal(await count(), before);
+  });
+  await t.test("apply places items at ERP codes with labels and exact stock", async () => {
+    const summary = await importProducts(items, true);
+    assert.equal(summary.created, 5);
+    assert.deepEqual(summary.sharedLocations, [{ sku: "IMP-B", code: "B.06.10.030 (2)" }]);
+    const kg = await placed("IMP-KG");
+    assert.equal(kg.stock, 548.8, "tanpa pembulatan");
+    assert.equal(kg.unit, "Kg");
+    assert.equal(kg.movement_class, "DEAD");
+    assert.ok(kg.name.length > 160);
+    assert.deepEqual([kg.room, kg.block, kg.rack_number, kg.position_number, kg.code], ["Ruangan 1", "B", 2, 1001, "B.02.01.001"]);
+    const a = await placed("IMP-A");
+    const b = await placed("IMP-B");
+    assert.deepEqual([a.code, a.position_number, a.movement_class], ["B.06.10.030", 10030, "SLOW"]);
+    assert.equal(b.code, "B.06.10.030 (2)");
+    assert.ok(b.position_number >= 900000);
+    const pole = await placed("IMP-POLE");
+    assert.deepEqual([pole.room, pole.code], ["POLE FACTORY", "POLE FACTORY"]);
+    assert.equal((await placed("IMP-NOLOC")).room, "Belum Ditempatkan");
+    const slot = await placed("SLOT-2");
+    assert.deepEqual([slot.stock, slot.movement_class, slot.room, slot.code], [7, "FAST", "Ruangan 1", "A.01.01.002"]);
+    assert.equal(
+      (await rows("SELECT id FROM stock_transactions WHERE product_id=?", [kg.id])).length,
+      0,
+      "impor tanpa histori",
+    );
+  });
+  await t.test("re-import is idempotent; pending product is skipped", async () => {
+    const before = await count();
+    assert.equal((await importProducts(items, true)).unchanged, 6);
+    assert.equal(await count(), before);
+    const slot = await placed("SLOT-2");
+    const pending = await scan(slot.qr_token, "IN", user);
+    const summary = await importProducts(csv(["A.01.01.002,SLOT-2,Keyboard,PCS,FAST MOVING,99"]), true);
+    assert.deepEqual(summary.skipped.map((s) => s.sku), ["SLOT-2"]);
+    await cancel(pending.id);
+  });
+  await t.test("Kg transactions and adjustments keep decimals; Pcs stays whole", async () => {
+    const kg = await placed("IMP-KG");
+    const out = await record(
+      { qr_token: kg.qr_token, mode: "OUT", quantity: 0.3, reservation_number: "7654321" },
+      user,
+    );
+    assert.deepEqual([out.stock_before, out.stock_after], [548.8, 548.5]);
+    const [tx] = await rows<{ quantity: number; stock_after: number }>(
+      "SELECT quantity,stock_after FROM stock_transactions WHERE id=?",
+      [out.id],
+    );
+    assert.deepEqual([tx.quantity, tx.stock_after], [0.3, 548.5]);
+    await adjustment({ product_id: kg.id, expected_stock: 548.5, physical_stock: 548.25, notes: "timbang ulang" }, user);
+    assert.equal((await placed("IMP-KG")).stock, 548.25);
+    const slot = await placed("SLOT-2");
+    await assert.rejects(record({ qr_token: slot.qr_token, mode: "IN", quantity: 1.5 }, user), {
+      code: "INVALID_QUANTITY",
+    });
+    await assert.rejects(
+      adjustment({ product_id: slot.id, expected_stock: 7, physical_stock: 6.5, notes: "salah" }, user),
+      { code: "INVALID_QUANTITY" },
+    );
+  });
+  await t.test("holding area is removed once empty", async () => {
+    await importProducts(csv([`A.01.01.003,IMP-NOLOC,Tanpa lokasi,Pcs,,1`]), true);
+    assert.equal((await placed("IMP-NOLOC")).code, "A.01.01.003");
+    assert.equal((await rows("SELECT id FROM rooms WHERE name='Belum Ditempatkan'")).length, 0);
+  });
 });

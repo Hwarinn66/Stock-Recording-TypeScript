@@ -4,6 +4,10 @@ import { cookies } from "next/headers";
 import { rows, execute, transaction } from "./db";
 import { AppError } from "./errors";
 export const cookieName = "warehouse_session";
+// Penanda perangkat yang pernah login sukses. Perangkat ini memakai kuota percobaan
+// sendiri, sehingga percobaan gagal dari perangkat lain tidak dapat menguncinya.
+const deviceCookie = "warehouse_device";
+const trustedDays = 90;
 export const hash = (value: string) =>
   createHash("sha256").update(value).digest("hex");
 export async function session(token?: string) {
@@ -28,7 +32,9 @@ export function checkOrigin(req: Request) {
   const allowed = [
     process.env.APP_URL,
     ...(process.env.ALLOWED_ORIGINS || "").split(","),
-  ].filter(Boolean);
+  ]
+    .map((value) => value?.trim())
+    .filter(Boolean);
   // Browser writes require an explicitly configured origin. Hardware clients may omit Origin and use a valid session cookie.
   if (origin && !allowed.includes(origin))
     throw new AppError(
@@ -43,8 +49,26 @@ export function checkOrigin(req: Request) {
       403,
     );
 }
+async function attemptKey(name: string, device: string | undefined) {
+  if (device) {
+    const key = hash(`device:${name}:${device}`);
+    const [known] = await rows(
+      "SELECT identity_hash FROM login_attempts WHERE identity_hash=? AND window_start>TIMESTAMPADD(DAY,?,UTC_TIMESTAMP(3))",
+      [key, -trustedDays],
+    );
+    if (known) return { key, trusted: true };
+  }
+  return { key: hash(name), trusted: false };
+}
 export async function login(username: string, password: string) {
-  const key = hash(username.toLowerCase());
+  const name = username.toLowerCase();
+  const jar = await cookies();
+  const cookieDevice = jar.get(deviceCookie)?.value;
+  const device =
+    cookieDevice && /^[0-9a-f]{64}$/.test(cookieDevice)
+      ? cookieDevice
+      : undefined;
+  const { key, trusted } = await attemptKey(name, device);
   await transaction(async (conn) => {
     await execute(
       "INSERT IGNORE INTO login_attempts(identity_hash) VALUES (?)",
@@ -96,14 +120,34 @@ export async function login(username: string, password: string) {
     "INSERT INTO sessions(token_hash,user_id,expires_at) VALUES (?,?,TIMESTAMPADD(HOUR,?,UTC_TIMESTAMP(3)))",
     [hash(token), user.id, hours],
   );
-  await execute("DELETE FROM login_attempts WHERE identity_hash=?", [key]);
+  // Kuota bersama per username tetap terkunci bila login sukses dari perangkat tepercaya.
+  if (!trusted)
+    await execute("DELETE FROM login_attempts WHERE identity_hash=?", [key]);
+  const deviceToken = device ?? randomBytes(32).toString("hex");
+  await execute(
+    "INSERT INTO login_attempts(identity_hash,attempts,window_start) VALUES (?,0,UTC_TIMESTAMP(3)) ON DUPLICATE KEY UPDATE attempts=0,window_start=UTC_TIMESTAMP(3)",
+    [hash(`device:${name}:${deviceToken}`)],
+  );
+  await execute(
+    "DELETE FROM login_attempts WHERE window_start<TIMESTAMPADD(DAY,?,UTC_TIMESTAMP(3))",
+    [-trustedDays],
+  );
   await execute("DELETE FROM sessions WHERE expires_at<UTC_TIMESTAMP(3)");
-  (await cookies()).set(cookieName, token, {
+  const secure = process.env.COOKIE_SECURE === "true";
+  // Cookie session dipasang lebih dulu; klien sederhana membaca Set-Cookie pertama.
+  jar.set(cookieName, token, {
     httpOnly: true,
     sameSite: "lax",
-    secure: process.env.COOKIE_SECURE === "true",
+    secure,
     path: "/",
     maxAge: hours * 3600,
+  });
+  jar.set(deviceCookie, deviceToken, {
+    httpOnly: true,
+    sameSite: "lax",
+    secure,
+    path: "/",
+    maxAge: trustedDays * 86400,
   });
 }
 export async function logout() {

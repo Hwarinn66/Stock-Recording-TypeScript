@@ -1,10 +1,12 @@
 # Warehouse Stock Management — QR + MySQL
 
-Aplikasi Next.js + TypeScript untuk gudang lokal Windows. Database **MySQL/MariaDB Laragon**, driver **mysql2/promise**, SQL langsung tanpa ORM. UI Tailwind CSS dengan komponen shadcn/ui, validasi Zod, QR generator `qrcode`, scanner kamera `html5-qrcode`, notifikasi Sonner.
+Aplikasi Next.js + TypeScript untuk gudang lokal Windows. Database **MySQL/MariaDB Laragon**, driver **mysql2/promise**, SQL langsung tanpa ORM. UI Tailwind CSS dengan komponen shadcn/ui, validasi Zod, QR generator `qrcode`, notifikasi Sonner. Scan dilakukan lewat **aplikasi Android Flutter** di folder [`mobile/`](mobile/README.md).
+
+Untuk menjalankan secara online gratis (Vercel + database Aiven), ikuti [DEPLOY-VERCEL.md](DEPLOY-VERCEL.md). Di Vercel dashboard mengecek perubahan stok tiap 15 detik; di PC/VPS sendiri tetap realtime (SSE).
 
 ## Alur utama
 
-Tambah barang → stok awal 0 + UUID QR otomatis → cetak label → HP login `/scanner` → pilih IN/OUT → scan → transaksi PENDING (stok belum berubah) → komputer menerima SSE → isi quantity → approve → SQL transaction memperbarui stok dan histori → QR dapat dipakai lagi. Cancel mempertahankan histori dan tidak mengubah stok.
+Tambah barang → stok awal 0 + UUID QR otomatis → cetak label → buka aplikasi **Warehouse Scanner** di HP → pilih IN/OUT → scan QR → ketik jumlah (keyboard angka) → khusus OUT: ketik **no reservasi 7 angka** → Selesai → SQL transaction langsung memperbarui stok dan histori → dashboard menerima SSE. No reservasi adalah identitas pengambilan dan divisi pengambil; daftarnya tampil di dashboard dan menu **No Reservasi**.
 
 Fitur: dashboard 8 indikator, master barang/kategori/ruangan/blok/rak/posisi, foto opsional tersimpan di MySQL, detail dan histori barang, regenerasi QR, label cetak, antrean multi-barang, adjustment stock opname dengan alasan, filter/search/sorting/pagination, CSV, soft disable barang, login server session, feedback suara/vibrasi HP. Semua data operasional berasal dari MySQL; browser tidak mengakses database.
 
@@ -45,6 +47,28 @@ Hierarki: **Ruangan → Blok → Rak → Nomor penempatan barang**.
 
 Untuk instalasi baru, cukup import `database.sql` terbaru; **tidak perlu menjalankan migrasi**. Uji migrasi otomatis: `npm run test:migration` menggunakan database sementara acak dan memerlukan izin CREATE/DROP DATABASE pada server test. Script menolak konfigurasi DB_NAME yang tidak berakhiran `_test`.
 
+Nama barang dari ERP bisa lebih dari 160 karakter: jalankan **`migrations/006_product_name_length.sql` sekali** (kolom `products.name` menjadi 255 karakter).
+
+**Stok berkoma untuk satuan Kg dan label Dead stock:** jalankan **`migrations/007_decimal_stock_dead_label.sql` sekali** setelah backup. Kolom stok dan quantity menjadi `DECIMAL(15,3)` (nilai lama tetap sama) dan label pergerakan menerima `DEAD`. Aturannya: **hanya barang bersatuan Kg** (termasuk tulisan `K g`) boleh berkoma, maksimal 3 angka di belakang koma, dan **tidak pernah dibulatkan**. Satuan lain tetap bilangan bulat; server menolak jumlah berkoma untuk satuan tersebut (`INVALID_QUANTITY`). Aturan ini berlaku di aplikasi HP, approve pending, dan adjustment.
+
+### Impor barang dari CSV ekspor ERP
+
+Mengimpor **kode barang (`nobar`), nama (`nabar`), satuan (`satuan`), sisa stok (`saldoakhir`), lokasi (`lokasi2`), dan status pergerakan (`stock_type`)** tanpa histori:
+
+```powershell
+npm run products:import -- --category=ATK "C:\Users\...\POSISI1_atk.csv" --category=Sparepart "C:\Users\...\POSISI1_part.csv"
+```
+
+Tanpa `--apply` hanya pratinjau; tambahkan `--apply` untuk menyimpan (satu SQL transaction, backup dahulu). Opsi `--room="Ruangan 1"` menentukan ruangan untuk kode lokasi ERP (default Ruangan 1).
+
+- **Lokasi:** kode ERP `AREA.rak.tingkat.urutan` (mis. `B.06.24.017`) menjadi Blok `B` / Rak `06` / posisi `24017`; kode aslinya disimpan apa adanya sehingga tampilan dan label sama dengan ERP. Kode non-standar (mis. `POLE FACTORY`) menjadi ruangan tersendiri. Dua barang dengan kode lokasi yang sama: barang kedua mendapat posisi `KODE (2)`. Barang tanpa kode lokasi masuk ruangan **Belum Ditempatkan**.
+- **Status pergerakan:** `FAST MOVING` → Fast, `SLOW MOVING` → Slow, `DEAD STOCK` → Dead stock.
+- **Saldo:** Kg disimpan persis (mis. `1159.53`); saldo berkoma untuk satuan selain Kg dan saldo lebih dari 3 desimal dilaporkan lalu dilewati.
+
+Kode barang yang sudah ada diperbarui nama, satuan, stok, lokasi, dan labelnya (kategori tetap); barang dengan transaksi pending dilewati. Impor ulang file yang sama tidak membuat data dobel.
+
+Untuk mencatat no reservasi, database yang sudah ada perlu **`migrations/005_reservation_number.sql` sekali** setelah backup. Migrasi ini hanya menambah kolom `stock_transactions.reservation_number` (NULL) dan index; data lama tidak berubah.
+
 Untuk database yang sudah memakai hierarki lokasi v2/v3, jalankan **`migrations/004_standard_warehouse_layout.sql` sekali** setelah backup. Migrasi ini mengizinkan Blok A–D berulang di tiap ruangan, menambahkan Ruangan 1–5, Blok A–D, dan Rak 01–25 tanpa menghapus barang atau histori yang sudah ada. Setelah itu, posisi tetap dibuat manual sesuai kebutuhan.
 
 ## Kode Barang dan label Fast/Slow manual
@@ -58,7 +82,7 @@ Untuk database yang sudah memakai hierarki lokasi v2/v3, jalankan **`migrations/
 
 Isi kapasitas/ukuran pada nama barang. Kode ditampilkan sebagai kolom tersendiri di tabel, lebih besar pada label QR cetak, hasil scan HP dan transaksi pending. Cocokkan kode pada label posisi dan barang saat pengambilan, terutama untuk varian yang berdampingan. QR tetap token unik, bukan kode barang; pencarian mendukung kode dan nama. CSV produk/histori memakai header `kode_barang`; JSON API tetap memakai `sku` agar kompatibel.
 
-**Fast/Slow adalah label manual milik gudang**, dipilih pada Tambah/Edit Barang dan disimpan dalam MySQL (`movement_class`: `FAST`, `SLOW`, atau NULL). Tidak ada rumus, ambang, periode, atau klasifikasi berdasarkan OUT. Label tidak berubah saat scan, approve, cancel atau adjustment. Barang tanpa label tetap tampil sebagai **Belum diberi label**, tidak dianggap Slow secara otomatis.
+**Fast/Slow adalah label manual milik gudang**, dipilih pada Tambah/Edit Barang dan disimpan dalam MySQL (`movement_class`: `FAST`, `SLOW`, `DEAD`, atau NULL). Tidak ada rumus, ambang, periode, atau klasifikasi berdasarkan OUT. Label tidak berubah saat scan, approve, cancel atau adjustment. Barang tanpa label tetap tampil sebagai **Belum diberi label**, tidak dianggap Slow secara otomatis.
 
 Pilihan **Barang → Urutkan**:
 
@@ -68,9 +92,10 @@ Pilihan **Barang → Urutkan**:
 | Stok terbanyak                          | Stok saat ini terbesar dahulu, nama A–Z untuk nilai sama                             |
 | Total OUT terbanyak                     | Jumlah unit OUT APPROVED sepanjang histori, terbesar dahulu; tidak memengaruhi label |
 | Lokasi A.01.01 → terakhir               | Ruangan, blok, nomor rak, lalu posisi secara numerik                                 |
-| Kelompok Fast → Slow, masing-masing A–Z | Fast A–Z, Slow A–Z, lalu Belum diberi label A–Z                                      |
+| Kelompok Fast → Slow → Dead, A–Z        | Fast A–Z, Slow A–Z, Dead A–Z, lalu Belum diberi label A–Z                            |
 | Fast moving saja · A–Z                  | Hanya label manual Fast                                                              |
 | Slow moving saja · A–Z                  | Hanya label manual Slow                                                              |
+| Dead stock saja · A–Z                   | Hanya label manual Dead stock                                                        |
 | Belum diberi label · A–Z                | Barang yang belum diklasifikasikan oleh user                                         |
 | Kode Barang A–Z                         | Urut identitas kode barang                                                           |
 
@@ -83,7 +108,7 @@ Pengelompokan dilakukan backend SQL sebelum pagination. CSV mengikuti filter dan
 - **Instalasi baru:** import `database.sql` terbaru saja, tanpa menjalankan migrasi tambahan.
 - Setelah upgrade, buka Barang → Edit → **Label pergerakan (manual)** untuk mengisi label Fast/Slow yang sudah Anda miliki. Selesaikan pending dahulu bila barang terkunci.
 
-API POST/PATCH produk menerima `movement_class:"FAST"`, `"SLOW"`, atau `null` (hapus label). Omit field saat PATCH untuk mempertahankan label. Kode barang tetap memakai `sku`. GET produk: `sort=name|stock|out_total|location|movement|fast|slow|unlabelled|sku|id`. Parameter periode dan ambang versi sebelumnya sudah tidak digunakan. Histori tetap default transaksi terbaru dahulu.
+API POST/PATCH produk menerima `movement_class:"FAST"`, `"SLOW"`, `"DEAD"`, atau `null` (hapus label). Omit field saat PATCH untuk mempertahankan label. Kode barang tetap memakai `sku`. GET produk: `sort=name|stock|out_total|location|movement|fast|slow|dead|unlabelled|sku|id`. Parameter periode dan ambang versi sebelumnya sudah tidak digunakan. Histori tetap default transaksi terbaru dahulu.
 
 Pengujian `npm run test:reports` memastikan label manual terpisah dari OUT, termasuk Fast tanpa OUT, Slow dengan OUT tinggi, hapus label, urutan A–Z, CSV, serta kode unik varian kapasitas berdampingan.
 
@@ -157,11 +182,11 @@ Perintah ini menghapus seluruh barang, seluruh nomor penempatan, transaksi pendi
    ```powershell
    New-NetFirewallRule -DisplayName "Warehouse LAN 3000" -Direction Inbound -Action Allow -Protocol TCP -LocalPort 3000 -Profile Private -RemoteAddress LocalSubnet
    ```
-6. Buka `http://192.168.1.10:3000/scanner` di HP dan login. Ini cukup untuk menguji koneksi dan input token; kamera pada IP HTTP biasanya **tidak tersedia**. Gunakan setup HTTPS berikut untuk scan kamera.
+6. Di aplikasi Warehouse Scanner, isi alamat server `http://192.168.1.10:3000` lalu login. Lihat [mobile/README.md](mobile/README.md).
 
-## HTTPS lokal untuk kamera smartphone
+## HTTPS lokal
 
-`localhost` pada HP menunjuk HP sendiri, bukan komputer. Membuka IP komputer lewat HTTP tidak menjadi secure context. Melewati warning sertifikat self-signed saja juga belum tentu mengaktifkan kamera.
+`localhost` pada HP menunjuk HP sendiri, bukan komputer. Aplikasi scanner Flutter membawa sertifikat CA mkcert milik komputer ini (`mobile/assets/certs/rootCA.crt`), sehingga **HP tidak perlu memasang sertifikat** — langkah 2–3 di bawah hanya diperlukan bila HP membuka dashboard lewat browser. Bila CA mkcert dibuat ulang, salin `rootCA.pem` baru ke file tersebut lalu build ulang APK.
 
 Cara yang disarankan untuk prototype LAN adalah **mkcert** dengan local CA yang dipercaya kedua perangkat (lihat [dokumentasi resmi mkcert](https://github.com/FiloSottile/mkcert)).
 
@@ -182,7 +207,7 @@ Cara yang disarankan untuk prototype LAN adalah **mkcert** dengan local CA yang 
    COOKIE_SECURE=true
    ```
 5. Jalankan `npm run dev:https`. Script memakai key/cert pada `certificates/`. Flag HTTPS hanya tersedia pada development Next.js, bukan `next start`.
-6. Buka **`https://192.168.1.10:3000/scanner`** di HP. Pastikan tidak ada certificate warning, login kembali, izinkan kamera. Prioritas kamera belakang (`facingMode: environment`). Pilih IN atau OUT sebelum scan.
+6. Di aplikasi Warehouse Scanner isi alamat **`https://192.168.1.10:3000`**. IP harus tercantum di sertifikat (`mkcert ... 192.168.1.10`); jika tidak, aplikasi menampilkan "Sertifikat HTTPS server tidak dipercaya".
 7. Untuk penggunaan produksi lokal, terminasi HTTPS dengan reverse proxy lokal (mis. Caddy/IIS) ke `next start`, pertahankan origin yang benar dan `COOKIE_SECURE=true`.
 
 Lihat [Next.js CLI — HTTPS](https://nextjs.org/docs/app/api-reference/cli/next). Tidak diperlukan database cloud atau tunnel publik.
@@ -191,8 +216,9 @@ Lihat [Next.js CLI — HTTPS](https://nextjs.org/docs/app/api-reference/cli/next
 
 - **Tambah Barang**: Kode Barang unik, nama, kategori, satuan, ruangan, blok, rak, dan nomor penempatan wajib. Nomor penempatan diketik langsung; posisi dibuat otomatis bila belum ada dan ditolak jika sudah ditempati barang aktif. Tidak ada input stok. Foto PNG/JPEG/WebP maksimum 1 MB, disimpan di MySQL; SVG tidak diterima.
 - **QR Barang**: download SVG, Print QR dengan nama/SKU/lokasi lengkap dan ruangan. QR hanya memuat UUID, bukan SKU atau nomor rak. Regenerate membatalkan token lama; cetak dan ganti label setelahnya.
-- **Scanner HP**: mode IN/OUT → scan → tampilkan hasil backend. Kamera berhenti sementara setelah pembacaan; tombol **Scan berikutnya** mengaktifkan lagi. Ini menghindari spam kamera, sementara aturan anti-double scan yang sebenarnya berada di database, tanpa cooldown waktu.
-- **Transaksi Pending**: isi bilangan bulat positif, lihat preview, Approve atau Batalkan. Quantity dapat juga disimpan lewat endpoint PATCH. UI approve mengirim quantity secara atomik sehingga tidak ada ketergantungan penyimpanan draft.
+- **Aplikasi scanner HP**: pilih IN/OUT → scan QR → backend memeriksa barang (aktif, tidak pending, OUT tidak stok 0) → ketik jumlah (keyboard angka, huruf ditolak; OUT tidak boleh melebihi stok) → OUT: no reservasi tepat 7 angka → Selesai. Transaksi tersimpan **APPROVED** dan stok langsung berubah, tanpa approval komputer. Kamera mati selama layar jumlah/reservasi/hasil terbuka; **Scan berikutnya** menyalakannya lagi.
+- **No Reservasi**: menu tersendiri dan tabel "No reservasi terbaru" di dashboard: no reservasi, waktu, kode/nama barang, qty, lokasi, petugas (akun yang scan), nomor transaksi. Pencarian riwayat menerima no reservasi; CSV `riwayat-reservations` menaruh no reservasi di kolom pertama.
+- **Transaksi Pending**: alur lama (scan → approve di komputer) masih tersedia untuk pending yang sudah ada dan client API lama (`POST /api/scan`). Isi jumlah positif (bilangan bulat; barang Kg boleh berkoma maks. 3 desimal), lihat preview, Approve atau Batalkan.
 - **Adjustment**: pilih barang, masukkan stok fisik nonnegatif, alasan dan konfirmasi approve. Backend memeriksa stok yang dilihat user masih sama; jika berubah, pilih ulang barang. Quantity histori adjustment adalah selisih, dapat negatif.
 - **Edit/rak**: stok dan Kode Barang tidak dapat diedit. Perpindahan rak membutuhkan konfirmasi; posisi baru harus kosong (rak yang sama boleh menampung barang lain). Histori menyimpan ID dan kode rak saat transaksi, tidak berubah saat master rak diedit.
 - **Nonaktifkan**: record barang dipertahankan. QR nonaktif ditolak. Tidak dapat mengubah barang/rak/QR/adjustment saat ada pending; selesaikan dahulu.
@@ -203,12 +229,13 @@ Lihat [Next.js CLI — HTTPS](https://nextjs.org/docs/app/api-reference/cli/next
 
 - Semua SQL melalui backend, menggunakan parameter `?` dan connection pool terpusat di `src/lib/db.ts`.
 - Scan melakukan SQL transaction: lock product `FOR UPDATE`, validasi aktif/token/stock OUT, cari pending dengan lock, lalu insert pending + event outbox. Token diverifikasi lagi setelah lock, sehingga regenerasi bersamaan tidak mengaktifkan token lama.
+- Transaksi dari aplikasi HP (`POST /api/transactions`) memakai lock yang sama: product `FOR UPDATE`, verifikasi token/aktif/pending, hitung stok baru (tidak boleh negatif), update stok + insert transaksi APPROVED + event dalam satu SQL transaction. Dua OUT bersamaan tidak dapat membuat stok minus.
 - Generated column `pending_product_id` + UNIQUE adalah perlindungan tambahan satu pending per barang. `active_location_id` + UNIQUE menjamin satu barang aktif per posisi.
 - Approve/cancel/quantity selalu lock **product dulu, transaction kemudian**. Validasi status terminal, quantity, overflow dan stock terbaru. Stok tidak boleh negatif. Semua query satu transaksi menggunakan **connection mysql2 yang sama**. Gagal di mana pun → rollback.
 - Nomor transaksi: counter harian per IN/OUT/ADJ, dibuat dalam transaction dengan upsert yang terkunci, ditambah unique constraint. Format `IN-YYYYMMDD-0001` (angka melebar bila >9999).
-- SSE membaca `stock_events` outbox di MySQL tiap 1 detik. Revisi memakai MAX(id) dan COUNT(*) agar commit yang selesai tidak berurutan tetap terdeteksi. Event ditulis dalam transaction yang sama; tidak ada event untuk perubahan yang rollback. Mendukung beberapa proses Node karena tidak bergantung pada EventEmitter memory. Klien reconnect dan fallback polling 5 detik bila SSE gagal. Ini bukan binlog streaming; latensi normal sekitar 1 detik plus jaringan.
+- SSE membaca `stock_events` outbox di MySQL tiap 1 detik. Revisi memakai MAX(id) dan COUNT(*) agar commit yang selesai tidak berurutan tetap terdeteksi. Event ditulis dalam transaction yang sama; tidak ada event untuk perubahan yang rollback. Mendukung beberapa proses Node karena tidak bergantung pada EventEmitter memory. Klien reconnect dan fallback polling 5 detik bila SSE gagal. Ini bukan binlog streaming; latensi normal sekitar 1 detik plus jaringan. Semua komponen dalam satu tab berbagi satu koneksi SSE. Server memangkas `stock_events` sekali per jam (1000 event terakhir disimpan) dan memeriksa session SSE tiap 10 detik; API tetap menolak session kedaluwarsa seketika.
 - Server session opaque random 256-bit; database hanya menyimpan SHA-256 token, cookie HttpOnly + SameSite=Lax, Secure bila dikonfigurasi. Expiry default 12 jam. Semua halaman operasional dan API termasuk scan/QR/SSE memerlukan login. Endpoint login adalah pengecualian yang memang harus publik; logout menghapus session database.
-- Login dibatasi 10 percobaan per username per 15 menit. Mutasi browser memeriksa Origin terhadap `APP_URL`/`ALLOWED_ORIGINS`. Tidak ada wildcard. Database credential tidak dikirim ke browser.
+- Login dibatasi 10 percobaan per username per 15 menit. Perangkat yang pernah login sukses mendapat cookie `warehouse_device` (90 hari) dan memakai kuota sendiri, sehingga percobaan gagal dari perangkat lain tidak dapat mengunci komputer/HP gudang. Mutasi browser memeriksa Origin terhadap `APP_URL`/`ALLOWED_ORIGINS`. Tidak ada wildcard. Database credential tidak dikirim ke browser.
 - Timestamp disimpan dalam UTC (connection timezone +00:00); UI/nomor transaksi/rekap harian memakai `APP_TIMEZONE`, default `Asia/Jakarta`. Waktu HP tidak dipercaya.
 - Gunakan akun DB aplikasi dengan izin seperlunya setelah import/setup (SELECT/INSERT/UPDATE/DELETE). Jangan buka port 3306 ke HP; HP hanya mengakses port aplikasi.
 - Backup database via HeidiSQL/phpMyAdmin sebelum pemakaian sungguhan. Jangan mengubah stock secara manual lewat SQL saat operasi berjalan.
@@ -222,7 +249,9 @@ Semua API berbasis JSON kecuali QR SVG, CSV dan SSE. Autentikasi menggunakan ses
 | POST         | `/api/auth/login`                                                 | `{username,password}`                              |
 | POST         | `/api/auth/logout`                                                | logout session                                     |
 | GET          | `/api/auth/me`                                                    | user aktif                                         |
-| POST         | `/api/scan`                                                       | `{qr_token,mode:"IN"\|"OUT"}`                      |
+| GET          | `/api/scan/:qr_token?mode=IN\|OUT`                                | cek barang hasil scan (aplikasi HP)                |
+| POST         | `/api/transactions`                                               | `{qr_token,mode,quantity,reservation_number?}`; OUT wajib no reservasi 7 angka; stok langsung berubah |
+| POST         | `/api/scan`                                                       | lama: `{qr_token,mode}` → transaksi PENDING        |
 | GET          | `/api/pending-transactions`                                       | daftar pending                                     |
 | PATCH        | `/api/transactions/:id/quantity`                                  | `{quantity}`                                       |
 | POST         | `/api/transactions/:id/approve`                                   | `{quantity}` atau quantity tersimpan               |
@@ -231,6 +260,7 @@ Semua API berbasis JSON kecuali QR SVG, CSV dan SSE. Autentikasi menggunakan ses
 | GET/PATCH    | `/api/products/:id`                                               | detail / edit, `{active:false}` untuk nonaktif     |
 | GET/POST     | `/api/products/:id/qr`                                            | SVG / regenerate                                   |
 | GET          | `/api/history/in`, `/api/history/out`, `/api/history/adjustments` | histori                                            |
+| GET          | `/api/history/reservations`                                       | OUT yang memiliki no reservasi                     |
 | POST         | `/api/adjustments`                                                | `{product_id,physical_stock,expected_stock,notes}` |
 | GET          | `/api/dashboard`                                                  | statistik                                          |
 | GET/POST     | `/api/categories`, `/api/locations`                               | list/create                                        |
@@ -240,7 +270,7 @@ Semua API berbasis JSON kecuali QR SVG, CSV dan SSE. Autentikasi menggunakan ses
 
 List products/history: `q,page,limit,sort,direction,location_id`; products menambah `category_id,stock=low|zero|safe,active=0|1|all`; history menambah `product_id,status,from,to`. CSV: `export=csv`. Field sort dipetakan ke daftar kolom internal, tidak diinterpolasi mentah dari input.
 
-Scanner fisik dapat menggantikan kamera: pembaca keyboard-wedge mengisi token pada form pengujian di `/scanner`, atau client terautentikasi mengirim JSON ke `/api/scan`. Business logic tetap identik. Client nonbrowser tetap wajib menyertakan session hasil login.
+Client nonbrowser (aplikasi Flutter, scanner fisik) tidak mengirim header Origin dan wajib menyertakan cookie session hasil login. Halaman scanner web `/scanner` sudah dihapus; scan memakai aplikasi di `mobile/`.
 
 ## Struktur
 
@@ -248,7 +278,7 @@ Scanner fisik dapat menggantikan kamera: pembaca keyboard-wedge mengisi token pa
 src/app/                  Next.js pages dan route handlers
 src/components/ui/        Komponen shadcn/ui
 src/components/workspace/ Dashboard, master data, QR, histori
-src/components/scanner.tsx Reader kamera, terpisah dari stok
+mobile/                   Aplikasi scanner Android (Flutter), lihat mobile/README.md
 src/hooks/use-live.ts      SSE + fallback polling
 src/lib/db.ts              mysql2 pool dan transaction helper
 src/lib/auth.ts            Login, session, Origin check
@@ -287,18 +317,18 @@ Suite menguji create/QR/stock 0, IN/OUT, concurrent scan antar-mode, cancel/unlo
 | Test | Langkah                                       | Hasil yang diharapkan                        |
 | ---- | --------------------------------------------- | -------------------------------------------- |
 | 1    | Buat BRG-004 pada A.03.01                     | Stock 0, QR dapat diunduh/cetak              |
-| 2    | HP IN → scan → komputer qty 10 → approve      | Pending sebelum approve; stock 10 sesudahnya |
-| 3    | HP OUT → qty 5 → approve                      | Stock turun menjadi 5                        |
-| 4    | Scan barang sama dua kali, termasuk beda mode | Scan kedua ditolak dengan nomor pending      |
-| 5    | Scan lalu cancel                              | Stock tetap; dapat scan kembali              |
-| 6    | Stock 3, OUT qty 5                            | Ditolak, tetap 3                             |
-| 7    | Scan OUT HDMI seed stock 0                    | STOK HABIS, tidak ada pending baru           |
+| 2    | Aplikasi HP: IN → scan → ketik 10 → Selesai   | Stock langsung 10, histori masuk APPROVED    |
+| 3    | Aplikasi HP: OUT → scan → 5 → reservasi 0012345 | Stock 5; no reservasi tampil di dashboard  |
+| 4    | Ketik huruf pada jumlah/no reservasi          | Keyboard angka; huruf tidak masuk            |
+| 5    | No reservasi 6 angka                          | Ditolak: harus tepat 7 angka                 |
+| 6    | Stock 3, OUT qty 5                            | Ditolak sebelum dikirim, tetap 3             |
+| 7    | Scan OUT barang stok 0                        | STOK HABIS, tidak lanjut ke jumlah           |
 | 8    | Stock 5, OUT 3                                | Stock 2, label merah                         |
-| 9    | Buka komputer dan HP bersamaan; scan HP       | Pending muncul tanpa refresh (~1 detik)      |
+| 9    | Buka dashboard lalu transaksi dari HP         | Stok & tabel reservasi berubah tanpa refresh (~1 detik) |
 | 10   | Buat barang baru di A.01.01 yang terpakai     | Pesan posisi sudah digunakan                 |
 | 11   | Jalankan integration rollback trigger         | Stock dan transaction sama-sama rollback     |
 
-Periksa juga izin kamera ditolak, HTTPS trust, kamera belakang, beep setelah gesture memilih mode, vibrasi (opsional, tidak tersedia pada semua browser), print label fisik, login/logout, dan reconnect Wi-Fi. Automasi server tidak membuktikan kompatibilitas kamera/sertifikat pada HP tertentu.
+Periksa juga izin kamera ditolak, sertifikat HTTPS, senter, getaran, print label fisik, login/logout, dan reconnect Wi-Fi. Automasi server tidak membuktikan kompatibilitas kamera/sertifikat pada HP tertentu.
 
 ## Troubleshooting
 
@@ -313,7 +343,7 @@ Periksa juga izin kamera ditolak, HTTPS trust, kamera belakang, beep setelah ges
 | Firewall memblokir                    | Izinkan TCP 3000 pada profil Private dan LocalSubnet; jangan membuka semua port.                                                                        |
 | INVALID_ORIGIN                        | Masukkan origin lengkap termasuk http/https, IP/hostname, port, tanpa slash akhir ke ALLOWED_ORIGINS. Restart.                                          |
 | Login kembali terus                   | Cocokkan COOKIE_SECURE dengan HTTPS; login ulang di origin HP. Cookie localhost dan IP berbeda.                                                         |
-| Kamera permission denied              | Izinkan kamera lewat pengaturan situs/browser; tutup aplikasi lain yang memakai kamera.                                                                 |
+| Kamera permission denied              | Izinkan kamera untuk Warehouse Scanner di Pengaturan HP → Aplikasi; tutup aplikasi lain yang memakai kamera.                                            |
 | MediaDevices tidak tersedia           | IP HTTP bukan secure context. Pasang dan trust CA lokal, gunakan HTTPS.                                                                                 |
 | Sertifikat invalid                    | Pastikan IP ada di SAN sertifikat, CA dipercaya, tanggal perangkat benar, sertifikat dibuat ulang setelah IP berubah.                                   |
 | QR tidak terbaca                      | Cetak cukup besar, sisakan margin putih, perbaiki cahaya/fokus. Scan QR dari halaman barang, bukan QR lain.                                             |
@@ -329,7 +359,7 @@ Periksa juga izin kamera ditolak, HTTPS trust, kamera belakang, beep setelah ges
 ## Rujukan
 
 - [Next.js](https://nextjs.org/docs), [mysql2 prepared statements](https://sidorares.github.io/node-mysql2/docs), [shadcn/ui](https://ui.shadcn.com/docs)
-- [html5-qrcode](https://scanapp.org/html5-qrcode-docs/), [mkcert](https://github.com/FiloSottile/mkcert)
+- [mobile_scanner (Flutter)](https://pub.dev/packages/mobile_scanner), [mkcert](https://github.com/FiloSottile/mkcert)
 
 ### HTTP smoke test
 

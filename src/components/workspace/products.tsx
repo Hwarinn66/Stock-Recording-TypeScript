@@ -18,6 +18,23 @@ import type {
 } from "@/types";
 import { Heading, State, StockBadge, Pager, useData } from "./shared";
 import { HistoryPage } from "./management";
+type Movement = Product["movement_class"];
+const movementLabel = (m: Movement) =>
+  m === "FAST"
+    ? "Fast moving"
+    : m === "SLOW"
+      ? "Slow moving"
+      : m === "DEAD"
+        ? "Dead stock"
+        : "Belum diberi label";
+const movementStyle = (m: Movement) =>
+  m === "FAST"
+    ? "bg-emerald-50 text-emerald-800"
+    : m === "SLOW"
+      ? "bg-amber-50 text-amber-800"
+      : m === "DEAD"
+        ? "bg-red-50 text-red-700"
+        : "bg-slate-100 text-slate-500";
 export function ProductsPage({ low = false }: { low?: boolean }) {
   const { version } = useLive();
   const [q, setQ] = useState("");
@@ -160,16 +177,17 @@ export function ProductsPage({ low = false }: { low?: boolean }) {
             <option value="out_total">Total OUT terbanyak (semua waktu)</option>
             <option value="location">Lokasi A.01.01 → terakhir</option>
             <option value="movement">
-              Kelompok Fast → Slow, masing-masing A–Z
+              Kelompok Fast → Slow → Dead, masing-masing A–Z
             </option>
             <option value="fast">Fast moving saja · A–Z</option>
             <option value="slow">Slow moving saja · A–Z</option>
+            <option value="dead">Dead stock saja · A–Z</option>
             <option value="unlabelled">Belum diberi label · A–Z</option>
             <option value="sku">Kode Barang A–Z</option>
           </select>
         </div>
         <p className="border-t border-slate-100 mt-4 pt-4 text-xs text-slate-500">
-          Fast/Slow adalah label manual dari master barang. Pilih melalui
+          Fast/Slow/Dead adalah label manual dari master barang. Pilih melalui
           Tambah/Edit Barang. Total OUT hanya dipakai untuk urutan OUT terbanyak
           dan tidak mengubah label.
         </p>
@@ -211,18 +229,9 @@ export function ProductsPage({ low = false }: { low?: boolean }) {
                         <th
                           colSpan={10}
                           scope="rowgroup"
-                          className={
-                            p.movement_class === "FAST"
-                              ? "bg-emerald-50 text-emerald-800"
-                              : "bg-amber-50 text-amber-800"
-                          }
+                          className={movementStyle(p.movement_class)}
                         >
-                          {p.movement_class === "FAST"
-                            ? "Fast moving"
-                            : p.movement_class === "SLOW"
-                              ? "Slow moving"
-                              : "Belum diberi label"}{" "}
-                          · Nama A–Z
+                          {movementLabel(p.movement_class)} · Nama A–Z
                         </th>
                       </tr>
                     )}
@@ -245,13 +254,9 @@ export function ProductsPage({ low = false }: { low?: boolean }) {
                     </td>
                     <td>
                       <span
-                        className={`text-[10px] font-bold px-2 py-1 rounded ${p.movement_class === "FAST" ? "bg-emerald-50 text-emerald-700" : p.movement_class === "SLOW" ? "bg-amber-50 text-amber-800" : "bg-slate-100 text-slate-500"}`}
+                        className={`text-[10px] font-bold px-2 py-1 rounded ${movementStyle(p.movement_class)}`}
                       >
-                        {p.movement_class === "FAST"
-                          ? "FAST MOVING"
-                          : p.movement_class === "SLOW"
-                            ? "SLOW MOVING"
-                            : "BELUM DIBERI LABEL"}
+                        {movementLabel(p.movement_class).toUpperCase()}
                       </span>
                     </td>
                     <td>
@@ -451,7 +456,7 @@ export function ProductForm({ id }: { id?: number }) {
                   id="name"
                   name="name"
                   required
-                  maxLength={160}
+                  maxLength={255}
                   defaultValue={initial?.name}
                 />
               </div>
@@ -497,6 +502,7 @@ export function ProductForm({ id }: { id?: number }) {
                   <option value="">Belum diberi label</option>
                   <option value="FAST">Fast moving</option>
                   <option value="SLOW">Slow moving</option>
+                  <option value="DEAD">Dead stock</option>
                 </select>
                 <p className="text-xs text-slate-400 mt-2">
                   Pilih sesuai klasifikasi gudang Anda. Tidak dihitung dari OUT.
@@ -708,14 +714,7 @@ export function ProductDetail({
                 ["Lokasi", p.location_code],
                 ["Satuan", p.unit],
                 ["Kode Barang", p.sku],
-                [
-                  "Label pergerakan",
-                  p.movement_class === "FAST"
-                    ? "Fast moving"
-                    : p.movement_class === "SLOW"
-                      ? "Slow moving"
-                      : "Belum diberi label",
-                ],
+                ["Label pergerakan", movementLabel(p.movement_class)],
                 ["Dibuat", timestamp(p.created_at, settings.data?.timezone)],
                 [
                   "Diperbarui",

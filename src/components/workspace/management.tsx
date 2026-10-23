@@ -3,21 +3,28 @@ import { useState } from "react";
 import { toast } from "sonner";
 import { Download, Plus } from "lucide-react";
 import { write, timestamp } from "@/lib/client";
+import { allowsDecimal, roundStock, validAmount } from "@/lib/stock";
 import { useLive } from "@/hooks/use-live";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
-import type { Product, Lookup, StockTransaction } from "@/types";
+import type {
+  InventoryProduct,
+  Lookup,
+  LocationLookup,
+  StockTransaction,
+} from "@/types";
 import { Heading, State, Badge, Pager, useData } from "./shared";
 export function HistoryPage({
   type,
   productId,
   compact = false,
 }: {
-  type: "in" | "out" | "adjustments";
+  type: "in" | "out" | "adjustments" | "reservations";
   productId?: number;
   compact?: boolean;
 }) {
+  const showReservation = type === "out" || type === "reservations";
   const { version } = useLive();
   const [q, setQ] = useState("");
   const [from, setFrom] = useState("");
@@ -28,8 +35,8 @@ export function HistoryPage({
   const [page, setPage] = useState(1);
   const [sort, setSort] = useState("scanned_at");
   const [direction, setDirection] = useState("desc");
-  const locations = useData<Lookup[]>("locations");
-  const products = useData<{ items: Product[] }>(
+  const locations = useData<LocationLookup[]>("locations");
+  const products = useData<{ items: InventoryProduct[] }>(
     "products?active=all&limit=100&q=" + encodeURIComponent(q),
   );
   const settings = useData<{ timezone: string }>("settings");
@@ -57,7 +64,9 @@ export function HistoryPage({
       ? "Riwayat barang masuk"
       : type === "out"
         ? "Riwayat barang keluar"
-        : "Riwayat adjustment";
+        : type === "reservations"
+          ? "Nomor reservasi"
+          : "Riwayat adjustment";
   return (
     <section>
       {compact ? (
@@ -65,14 +74,22 @@ export function HistoryPage({
       ) : (
         <Heading
           title={title}
-          description="Jejak transaksi lengkap, termasuk transaksi yang dibatalkan."
+          description={
+            type === "reservations"
+              ? "Barang keluar dari aplikasi scanner HP. No reservasi adalah identitas pengambilan dan divisi pengambil barang."
+              : "Jejak transaksi lengkap, termasuk transaksi yang dibatalkan."
+          }
         />
       )}
       <div className="flex flex-wrap gap-2 mb-4">
         <Input
           className="max-w-xs"
           aria-label="Cari histori"
-          placeholder="Cari transaksi, barang, Kode Barang, rak…"
+          placeholder={
+            showReservation
+              ? "Cari no reservasi, transaksi, barang, rak…"
+              : "Cari transaksi, barang, Kode Barang, rak…"
+          }
           value={q}
           onChange={(e) => reset(() => setQ(e.target.value))}
         />
@@ -112,7 +129,7 @@ export function HistoryPage({
           <option value="">Semua posisi</option>
           {locations.data?.map((l) => (
             <option key={l.id} value={l.id}>
-              {l.code}
+              {l.room_name} / {l.code}
             </option>
           ))}
         </select>
@@ -162,6 +179,7 @@ export function HistoryPage({
             <thead>
               <tr>
                 {[
+                  ...(showReservation ? ["No Reservasi"] : []),
                   "Nomor Transaksi",
                   "Tanggal / Jam Scan",
                   "Kode Barang",
@@ -173,6 +191,7 @@ export function HistoryPage({
                   "Sesudah",
                   "Approved At",
                   "Cancelled At",
+                  "Petugas",
                   "Status",
                   "Alasan",
                 ].map((h) => (
@@ -183,6 +202,11 @@ export function HistoryPage({
             <tbody>
               {list.data.items.map((t) => (
                 <tr key={t.id}>
+                  {showReservation && (
+                    <td className="font-mono text-sm font-bold">
+                      {t.reservation_number || "—"}
+                    </td>
+                  )}
                   <td className="font-semibold">{t.transaction_number}</td>
                   <td>{timestamp(t.scanned_at, settings.data?.timezone)}</td>
                   <td>{t.sku}</td>
@@ -194,6 +218,7 @@ export function HistoryPage({
                   <td>{t.stock_after ?? "—"}</td>
                   <td>{timestamp(t.approved_at, settings.data?.timezone)}</td>
                   <td>{timestamp(t.cancelled_at, settings.data?.timezone)}</td>
+                  <td>{t.actor_name || "—"}</td>
                   <td>
                     <Badge value={t.status} />
                   </td>
@@ -356,16 +381,19 @@ export function LookupsPage({ kind }: { kind: "categories" }) {
 export function AdjustmentsPage() {
   const { version } = useLive();
   const [search, setSearch] = useState("");
-  const products = useData<{ items: Product[] }>(
+  const products = useData<{ items: InventoryProduct[] }>(
     "products?limit=100&q=" + encodeURIComponent(search),
     version,
   );
-  const [selected, setSelected] = useState<Product>();
+  // Simpan ID saja; data barang diambil dari daftar terbaru agar stok sistem ikut realtime.
+  const [selectedId, setSelectedId] = useState<number>();
+  const selected = products.data?.items.find((p) => p.id === selectedId);
   const [physical, setPhysical] = useState("");
   const [notes, setNotes] = useState("");
   const [busy, setBusy] = useState(false);
   const [revision, setRevision] = useState(0);
-  const amount = Number(physical);
+  const amount = Number(physical.replace(",", "."));
+  const decimal = allowsDecimal(selected?.unit);
   return (
     <>
       <Heading
@@ -393,7 +421,7 @@ export function AdjustmentsPage() {
                 notes,
               });
               toast.success("Stock adjustment disimpan");
-              setSelected(undefined);
+              setSelectedId(undefined);
               setPhysical("");
               setNotes("");
               setRevision((v) => v + 1);
@@ -414,7 +442,7 @@ export function AdjustmentsPage() {
               value={search}
               onChange={(e) => {
                 setSearch(e.target.value);
-                setSelected(undefined);
+                setSelectedId(undefined);
               }}
               className="mb-3"
             />
@@ -424,11 +452,7 @@ export function AdjustmentsPage() {
               required
               value={selected?.id || ""}
               onChange={(e) =>
-                setSelected(
-                  products.data?.items.find(
-                    (p) => p.id === Number(e.target.value),
-                  ),
-                )
+                setSelectedId(Number(e.target.value) || undefined)
               }
             >
               <option value="">Pilih barang</option>
@@ -453,7 +477,7 @@ export function AdjustmentsPage() {
               <div>
                 <p className="text-xs text-slate-500">Selisih</p>
                 <p className="text-xl font-bold mt-2">
-                  {selected && physical !== "" ? amount - selected.stock : "—"}
+                  {selected && physical !== "" ? roundStock(amount - selected.stock) : "—"}
                 </p>
               </div>
             </div>
@@ -465,7 +489,8 @@ export function AdjustmentsPage() {
               type="number"
               min="0"
               max="2147483647"
-              step="1"
+              step={decimal ? "0.001" : "1"}
+              inputMode={decimal ? "decimal" : "numeric"}
               required
               value={physical}
               onChange={(e) => setPhysical(e.target.value)}
@@ -487,7 +512,7 @@ export function AdjustmentsPage() {
                 busy ||
                 !selected ||
                 physical === "" ||
-                !Number.isInteger(amount) ||
+                !validAmount(amount, selected.unit) ||
                 amount < 0
               }
             >
@@ -539,21 +564,27 @@ export function SettingsPage() {
           </p>
         </Card>
         <Card>
-          <h2 className="font-bold mb-4">Scanner smartphone</h2>
+          <h2 className="font-bold mb-4">Aplikasi scanner HP</h2>
           <ol className="list-decimal pl-5 space-y-3 text-sm text-slate-600">
             <li>Hubungkan HP dan komputer ke Wi-Fi yang sama.</li>
-            <li>Jalankan ipconfig di Windows untuk melihat IPv4 komputer.</li>
-            <li>Buka alamat komputer dengan path /scanner lalu login.</li>
             <li>
-              Gunakan HTTPS dengan sertifikat yang dipercaya HP untuk
-              mengaktifkan kamera.
+              Pasang aplikasi Warehouse Scanner (APK) di HP Android.
             </li>
             <li>
-              Pilih IN atau OUT, scan QR, kemudian proses quantity di komputer.
+              Isi alamat server dengan IPv4 komputer (lihat ipconfig), misalnya{" "}
+              <span className="font-mono">https://192.168.1.10:3000</span>,
+              lalu login.
+            </li>
+            <li>
+              Pilih IN atau OUT, scan QR barang, lalu ketik jumlah.
+            </li>
+            <li>
+              Untuk OUT, isi no reservasi 7 angka. Stok langsung diperbarui
+              setelah menekan Selesai.
             </li>
           </ol>
           <p className="text-xs text-slate-400 mt-5">
-            Langkah HTTPS, firewall, import SQL, dan troubleshooting lengkap
+            Langkah build APK, HTTPS, firewall, dan troubleshooting lengkap
             tersedia di README.md.
           </p>
         </Card>

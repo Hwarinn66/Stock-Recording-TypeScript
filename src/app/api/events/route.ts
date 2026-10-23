@@ -1,12 +1,38 @@
 import { cookies } from "next/headers";
 import { cookieName, requireUser, session } from "@/lib/auth";
-import { rows } from "@/lib/db";
-import { errorResponse } from "@/lib/errors";
+import { rows, execute } from "@/lib/db";
+import { errorResponse, ok } from "@/lib/errors";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
+// Outbox hanya perlu event terbaru. Pangkas sekali per jam agar COUNT(*) tetap ringan;
+// penghapusan mengubah revisi sehingga klien cukup refresh satu kali.
+const keptEvents = 1000;
+const pruneState = globalThis as unknown as { stockEventsPrunedAt?: number };
+async function prune(version: number) {
+  const now = Date.now();
+  if (now - (pruneState.stockEventsPrunedAt ?? 0) < 3600000) return;
+  pruneState.stockEventsPrunedAt = now;
+  if (version > keptEvents)
+    await execute("DELETE FROM stock_events WHERE id<=?", [
+      version - keptEvents,
+    ]);
+}
+async function readRevision() {
+  const [result] = await rows<{ version: number; count: number }>(
+    "SELECT COALESCE(MAX(id),0) version, COUNT(*) count FROM stock_events",
+  );
+  await prune(result.version);
+  // AUTO_INCREMENT allocation order is not commit order: include COUNT
+  // so a late commit with a smaller ID still triggers a refresh.
+  return { ...result, revision: `${result.version}:${result.count}` };
+}
 export async function GET(req: Request) {
   try {
     await requireUser();
+    // Mode cek berkala (build Vercel): satu jawaban singkat tanpa koneksi terbuka,
+    // karena Vercel menghitung kuota selama request berlangsung.
+    if (new URL(req.url).searchParams.has("poll"))
+      return ok({ revision: (await readRevision()).revision });
     const token = (await cookies()).get(cookieName)!.value;
     let ended = false;
     let timer: ReturnType<typeof setTimeout> | undefined;
@@ -31,22 +57,18 @@ export async function GET(req: Request) {
         const tick = async () => {
           try {
             if (ended) return;
-            if (!(await session(token))) {
+            // Session diperiksa tiap 10 detik; API tetap menolak session kedaluwarsa seketika.
+            if (heartbeat % 10 === 0 && !(await session(token))) {
               send("event: expired\ndata: {}\n\n");
               stop();
               return;
             }
-            const [result] = await rows<{ version: number; count: number }>(
-              "SELECT COALESCE(MAX(id),0) version, COUNT(*) count FROM stock_events",
-            );
-            // AUTO_INCREMENT allocation order is not commit order: include COUNT
-            // so a late commit with a smaller ID still triggers a refresh.
-            const revision = `${result.version}:${result.count}`;
+            const { version, count, revision } = await readRevision();
             if (revision !== last || retrying) {
               last = revision;
               retrying = false;
               send(
-                `id: ${revision}\nevent: update\ndata: {"version":${result.version},"count":${result.count}}\n\n`,
+                `id: ${revision}\nevent: update\ndata: {"version":${version},"count":${count}}\n\n`,
               );
             }
             if (++heartbeat % 15 === 0) send(": heartbeat\n\n");

@@ -26,12 +26,19 @@ export function LocationPicker({
     initial?.position_number ? String(initial.position_number) : "",
   );
 
-  const rackPositions = locations.filter(
-    (item) => item.active && String(item.rack_id) === rack,
-  );
-  const occupied = rackPositions.find(
-    (item) => String(item.position_number) === position,
-  );
+  // Posisi yang sudah ada belum tentu terisi: product_id null berarti kosong.
+  const existing = position
+    ? locations.find(
+        (item) =>
+          String(item.rack_id) === rack &&
+          item.position_number === Number(position),
+      )
+    : undefined;
+  const takenBy =
+    existing?.active && existing.product_id && existing.product_id !== productId
+      ? existing.product_name
+      : null;
+  const inactive = !!existing && !existing.active;
   const selectedRack = racks.find((item) => String(item.id) === rack);
   const selectedBlock = blocks.find(
     (item) => item.id === selectedRack?.block_id,
@@ -137,18 +144,18 @@ export function LocationPicker({
       <p
         className={
           "text-xs mt-3 " +
-          (occupied && occupied.product_id !== productId
-            ? "text-red-700"
-            : "text-emerald-700")
+          (takenBy || inactive ? "text-red-700" : "text-emerald-700")
         }
       >
         {!rack
           ? "Pilih ruangan → blok → rak, lalu ketik nomor penempatan."
           : !position
             ? "Ketik nomor penempatan yang ingin dipakai."
-            : occupied && occupied.product_id !== productId
-              ? `Posisi ${position} sudah ditempati oleh ${occupied.product_name}. Pilih nomor lain.`
-              : `${rooms.find((item) => String(item.id) === room)?.name || ""} / ${selectedBlock?.code || ""}.${String(selectedRack?.rack_number || 0).padStart(2, "0")}.${String(Number(position)).padStart(2, "0")} · tersedia`}
+            : takenBy
+              ? `Posisi ${position} sudah ditempati oleh ${takenBy}. Pilih nomor lain.`
+              : inactive
+                ? `Posisi ${position} nonaktif. Aktifkan di Lokasi Gudang atau pilih nomor lain.`
+                : `${rooms.find((item) => String(item.id) === room)?.name || ""} / ${existing?.code || `${selectedBlock?.code || ""}.${String(selectedRack?.rack_number || 0).padStart(2, "0")}.${String(Number(position)).padStart(2, "0")}`} · tersedia`}
       </p>
     </fieldset>
   );

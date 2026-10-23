@@ -41,10 +41,7 @@ export default function Login() {
             const f = new FormData(e.currentTarget);
             try {
               await write("auth/login", Object.fromEntries(f));
-              location.href =
-                new URLSearchParams(location.search).get("next") === "/scanner"
-                  ? "/scanner"
-                  : "/";
+              location.href = "/";
             } catch (err) {
               setError((err as Error).message);
             } finally {

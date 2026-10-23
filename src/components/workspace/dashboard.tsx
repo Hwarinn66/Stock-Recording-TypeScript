@@ -16,10 +16,11 @@ import {
 } from "lucide-react";
 import { useLive } from "@/hooks/use-live";
 import { write, timestamp } from "@/lib/client";
+import { allowsDecimal, MAX_QUANTITY, roundStock, validAmount } from "@/lib/stock";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card } from "@/components/ui/card";
-import type { StockTransaction, Product } from "@/types";
+import type { StockTransaction, InventoryProduct } from "@/types";
 import { Heading, State, Badge, Live, useData, StockBadge } from "./shared";
 function PendingCard({
   item,
@@ -32,9 +33,10 @@ function PendingCard({
 }) {
   const [qty, setQty] = useState(item.quantity?.toString() || "");
   const [busy, setBusy] = useState(false);
-  const n = Number(qty);
-  const valid = Number.isInteger(n) && n > 0 && n <= 2147483647;
-  const after = item.stock + (item.transaction_type === "IN" ? n : -n);
+  const decimal = allowsDecimal(item.unit);
+  const n = Number(qty.replace(",", "."));
+  const valid = qty !== "" && validAmount(n, item.unit) && n > 0 && n <= MAX_QUANTITY;
+  const after = roundStock(item.stock + (item.transaction_type === "IN" ? n : -n));
   const act = async (cancel = false) => {
     if (
       cancel &&
@@ -92,10 +94,11 @@ function PendingCard({
           <Input
             id={"qty-" + item.id}
             type="number"
-            min="1"
+            min={decimal ? "0.001" : "1"}
             max="2147483647"
-            step="1"
-            placeholder="Masukkan jumlah"
+            step={decimal ? "0.001" : "1"}
+            inputMode={decimal ? "decimal" : "numeric"}
+            placeholder={decimal ? "Mis. 2.5" : "Masukkan jumlah"}
             value={qty}
             onChange={(e) => setQty(e.target.value)}
           />
@@ -155,6 +158,71 @@ export function PendingList({
     </>
   );
 }
+// Barang keluar terbaru dari aplikasi HP beserta no reservasi (identitas pengambilan & divisi).
+function RecentReservations({ version }: { version: number }) {
+  const list = useData<{ items: StockTransaction[] }>(
+    "history/reservations?limit=8&sort=scanned_at&direction=desc",
+    version,
+  );
+  const settings = useData<{ timezone?: string }>("settings");
+  return (
+    <section className="mb-8">
+      <div className="flex items-center justify-between mb-4">
+        <h2 className="text-lg font-bold">No reservasi terbaru</h2>
+        <Link href="/reservations" className="text-xs text-emerald-700">
+          Lihat semua →
+        </Link>
+      </div>
+      <State
+        error={list.error}
+        loading={!list.data && list.loading}
+        empty={list.data?.items.length === 0}
+      />
+      {!!list.data?.items.length && (
+        <Card className="p-0 overflow-x-auto">
+          <table className="w-full text-xs">
+            <thead>
+              <tr>
+                {[
+                  "No Reservasi",
+                  "Waktu",
+                  "Kode Barang",
+                  "Nama Barang",
+                  "Qty Keluar",
+                  "Lokasi",
+                  "Petugas",
+                  "Nomor Transaksi",
+                ].map((h) => (
+                  <th key={h}>{h}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {list.data.items.map((t) => (
+                <tr key={t.id}>
+                  <td className="font-mono text-sm font-bold">
+                    {t.reservation_number}
+                  </td>
+                  <td>{timestamp(t.scanned_at, settings.data?.timezone)}</td>
+                  <td className="font-mono">{t.sku}</td>
+                  <td>{t.name}</td>
+                  <td className="font-bold">
+                    {t.quantity} {t.unit}
+                  </td>
+                  <td>
+                    {t.room_name} / {t.location_code}
+                  </td>
+                  <td>{t.actor_name || "—"}</td>
+                  <td className="text-slate-500">{t.transaction_number}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </Card>
+      )}
+    </section>
+  );
+}
 export function PendingPage() {
   const { version, connected } = useLive();
   return (
@@ -172,7 +240,7 @@ export function PendingPage() {
 export function Dashboard() {
   const { version, connected } = useLive();
   const stats = useData<Record<string, number>>("dashboard", version);
-  const low = useData<{ items: Product[] }>(
+  const low = useData<{ items: InventoryProduct[] }>(
     "products?stock=low&limit=5&sort=stock&direction=asc",
     version,
   );
@@ -223,6 +291,7 @@ export function Dashboard() {
           </Card>
         ))}
       </div>
+      <RecentReservations version={version} />
       <div className="grid xl:grid-cols-[1fr_320px] gap-6">
         <section>
           <div className="flex items-center justify-between mb-4">
@@ -276,11 +345,10 @@ export function Dashboard() {
             <ScanLine className="mb-4 text-emerald-300" />
             <h3 className="font-bold">Dari rak ke dashboard.</h3>
             <p className="text-xs leading-5 text-emerald-100/70 mt-2">
-              Buka scanner di HP, pilih IN atau OUT, lalu scan label QR barang.
+              Buka aplikasi Warehouse Scanner di HP, pilih IN atau OUT, scan
+              QR barang, lalu isi jumlah. Barang keluar wajib no reservasi.
+              Stok langsung diperbarui.
             </p>
-            <Button asChild variant="outline" className="mt-4 w-full">
-              <Link href="/scanner">Buka Scanner</Link>
-            </Button>
           </Card>
         </section>
       </div>

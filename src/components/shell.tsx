@@ -16,7 +16,7 @@ import {
   SlidersHorizontal,
   Settings,
   LogOut,
-  ScanLine,
+  ClipboardList,
   Menu,
   Search,
 } from "lucide-react";
@@ -31,6 +31,7 @@ const links = [
   ["/products/new", "Tambah Barang", Plus],
   ["/history/in", "Riwayat Masuk", ArrowDownToLine],
   ["/history/out", "Riwayat Keluar", ArrowUpFromLine],
+  ["/reservations", "No Reservasi", ClipboardList],
   ["/low-stock", "Stock Menipis", TriangleAlert],
   ["/categories", "Kategori", Tags],
   ["/locations", "Lokasi Gudang", MapPin],
@@ -75,20 +76,8 @@ export function Shell({
           ))}
         </nav>
         <div className="mt-auto p-4">
-          <Link
-            href="/scanner"
-            className="flex items-center gap-3 bg-slate-800 rounded-lg p-3 text-white"
-          >
-            <ScanLine size={19} />
-            <div className="text-xs">
-              Scanner QR
-              <span className="block text-slate-400 text-[10px] mt-1">
-                Buka dari smartphone
-              </span>
-            </div>
-          </Link>
           <button
-            className="flex items-center gap-3 p-3 text-xs mt-3"
+            className="flex items-center gap-3 p-3 text-xs"
             onClick={async () => {
               try {
                 await write("auth/logout");

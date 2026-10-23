@@ -53,9 +53,10 @@ CREATE TABLE locations (
 ) ENGINE=InnoDB;
 CREATE TABLE products (
  id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY, sku VARCHAR(64) NOT NULL UNIQUE,
- name VARCHAR(160) NOT NULL, category_id INT UNSIGNED NOT NULL, unit VARCHAR(20) NOT NULL,
- movement_class ENUM('FAST','SLOW') NULL DEFAULT NULL,
- stock INT NOT NULL DEFAULT 0, location_id INT UNSIGNED NOT NULL,
+ name VARCHAR(255) NOT NULL, category_id INT UNSIGNED NOT NULL, unit VARCHAR(20) NOT NULL,
+ movement_class ENUM('FAST','SLOW','DEAD') NULL DEFAULT NULL,
+ -- DECIMAL: barang satuan Kg boleh berkoma; satuan lain dijaga bilangan bulat oleh aplikasi.
+ stock DECIMAL(15,3) NOT NULL DEFAULT 0, location_id INT UNSIGNED NOT NULL,
  qr_token CHAR(36) NOT NULL UNIQUE, image MEDIUMTEXT, description TEXT,
  active BOOLEAN NOT NULL DEFAULT 1,
  active_location_id INT UNSIGNED GENERATED ALWAYS AS (CASE WHEN active=1 THEN location_id ELSE NULL END) STORED,
@@ -74,8 +75,10 @@ CREATE TABLE stock_transactions (
  -- Snapshot kode rak agar perubahan nama/kode rak tidak mengubah histori.
  location_code VARCHAR(50) NOT NULL, room_name VARCHAR(100) NULL,
  transaction_type ENUM('IN','OUT','ADJUSTMENT') NOT NULL,
- quantity INT NULL, stock_before INT NULL, stock_after INT NULL,
+ quantity DECIMAL(15,3) NULL, stock_before DECIMAL(15,3) NULL, stock_after DECIMAL(15,3) NULL,
  status ENUM('PENDING','APPROVED','CANCELLED') NOT NULL DEFAULT 'PENDING', notes TEXT,
+ -- Nomor reservasi 7 angka: identitas pengambilan & divisi untuk barang keluar.
+ reservation_number CHAR(7) NULL,
  actor_id INT UNSIGNED NOT NULL,
  pending_product_id INT UNSIGNED GENERATED ALWAYS AS (CASE WHEN status='PENDING' THEN product_id ELSE NULL END) STORED,
  scanned_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3), approved_at DATETIME(3), cancelled_at DATETIME(3),
@@ -86,6 +89,7 @@ CREATE TABLE stock_transactions (
  FOREIGN KEY(actor_id) REFERENCES users(id),
  CHECK (stock_before IS NULL OR stock_before >= 0), CHECK(stock_after IS NULL OR stock_after >= 0),
  CHECK(transaction_type='ADJUSTMENT' OR quantity IS NULL OR quantity > 0),
+ CHECK(reservation_number IS NULL OR CHAR_LENGTH(reservation_number) = 7),
  CHECK(status <> 'APPROVED' OR (quantity IS NOT NULL AND stock_before IS NOT NULL AND stock_after IS NOT NULL AND approved_at IS NOT NULL))
 ) ENGINE=InnoDB;
 CREATE INDEX idx_locations_code ON locations(code);
@@ -97,6 +101,7 @@ CREATE INDEX idx_transactions_status ON stock_transactions(status);
 CREATE INDEX idx_transactions_type ON stock_transactions(transaction_type);
 CREATE INDEX idx_transactions_scanned ON stock_transactions(scanned_at);
 CREATE INDEX idx_transactions_approved ON stock_transactions(approved_at);
+CREATE INDEX idx_transactions_reservation ON stock_transactions(reservation_number);
 -- Transactional outbox: SSE hanya membaca perubahan yang telah COMMIT.
 CREATE TABLE stock_events (
  id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY, event_type VARCHAR(40) NOT NULL,

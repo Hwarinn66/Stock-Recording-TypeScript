@@ -171,11 +171,15 @@ export async function mutateLocation(
           "Posisi masih ditempati barang aktif.",
           409,
         );
-      const code = locationCode(
-        String(block.code),
-        Number(rack.rack_number),
-        Number(input.position_number),
-      );
+      // Kode tersimpan dipertahankan bila posisi tidak dipindah (mis. kode ERP A.01.01.001).
+      const code =
+        old && !moved
+          ? String(old.code)
+          : locationCode(
+              String(block.code),
+              Number(rack.rack_number),
+              Number(input.position_number),
+            );
       const values = [
         input.rack_id,
         input.position_number,

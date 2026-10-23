@@ -1,17 +1,53 @@
 import { z } from "zod";
+import { roundStock } from "@/lib/stock";
 export const idSchema = z.coerce.number().int().positive().max(2147483647);
-export const quantitySchema = z.number().int().positive().max(2147483647);
+const threeDecimals = (value: number) => Math.abs(value - roundStock(value)) < 1e-9;
+// Maks. 3 desimal; aturan bulat untuk satuan selain Kg dicek di service (butuh satuan barang).
+export const quantitySchema = z
+  .number()
+  .positive()
+  .max(2147483647)
+  .refine(threeDecimals, "Maksimal 3 angka di belakang koma.");
+export const movementSchema = z.enum(["FAST", "SLOW", "DEAD"]);
+export const qrTokenSchema = z.string().uuid();
 export const scanSchema = z.object({
-  qr_token: z.string().uuid(),
+  qr_token: qrTokenSchema,
   mode: z.enum(["IN", "OUT"]),
 });
+export const reservationSchema = z
+  .string()
+  .regex(/^\d{7}$/, "No reservasi harus tepat 7 angka.");
+export const lookupSchema = z.object({ mode: z.enum(["IN", "OUT"]) });
+// Transaksi dari aplikasi scanner HP: stok langsung berubah tanpa approval.
+export const recordSchema = z
+  .object({
+    qr_token: qrTokenSchema,
+    mode: z.enum(["IN", "OUT"]),
+    quantity: quantitySchema,
+    reservation_number: reservationSchema.optional(),
+  })
+  .strict()
+  .superRefine((value, ctx) => {
+    if (value.mode === "OUT" && !value.reservation_number)
+      ctx.addIssue({
+        code: "custom",
+        path: ["reservation_number"],
+        message: "No reservasi wajib untuk barang keluar.",
+      });
+    if (value.mode === "IN" && value.reservation_number)
+      ctx.addIssue({
+        code: "custom",
+        path: ["reservation_number"],
+        message: "No reservasi hanya untuk barang keluar.",
+      });
+  });
 const productBaseSchema = z
   .object({
     sku: z.string().trim().min(1).max(64),
-    name: z.string().trim().min(1).max(160),
+    name: z.string().trim().min(1).max(255),
     category_id: idSchema,
     unit: z.string().trim().min(1).max(20),
-    movement_class: z.enum(["FAST", "SLOW"]).nullable().optional(),
+    movement_class: movementSchema.nullable().optional(),
     // location_id dipertahankan untuk kompatibilitas API lama.
     location_id: idSchema.optional(),
     rack_id: idSchema.optional(),
@@ -70,8 +106,12 @@ export const editProductSchema = productBaseSchema
   });
 export const adjustmentSchema = z.object({
   product_id: idSchema,
-  physical_stock: z.number().int().min(0).max(2147483647),
-  expected_stock: z.number().int().min(0),
+  physical_stock: z
+    .number()
+    .min(0)
+    .max(2147483647)
+    .refine(threeDecimals, "Maksimal 3 angka di belakang koma."),
+  expected_stock: z.number().min(0),
   notes: z.string().trim().min(3).max(2000),
 });
 export const categorySchema = z.object({
@@ -107,7 +147,9 @@ export const listSchema = z.object({
   q: z.string().max(160).default(""),
   page: z.coerce.number().int().min(1).max(100000).default(1),
   limit: z.coerce.number().int().min(1).max(100).default(20),
-  sort: z.string().max(40).default("id"),
+  sort: z
+    .enum(["id", "scanned_at", "approved_at", "quantity", "sku"])
+    .default("id"),
   direction: z.enum(["asc", "desc"]).default("desc"),
   category_id: idSchema.optional(),
   location_id: idSchema.optional(),
@@ -135,6 +177,7 @@ export const productListSchema = listSchema.extend({
       "location",
       "fast",
       "slow",
+      "dead",
       "movement",
       "unlabelled",
     ])

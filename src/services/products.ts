@@ -9,10 +9,14 @@ import { rows, execute, transaction, publish } from "@/lib/db";
 import { AppError } from "@/lib/errors";
 import { productSchema, editProductSchema } from "@/validators";
 import type { Product } from "@/types";
-import { lockProduct, ensureUnlocked } from "./transactions";
+import { lockProduct, ensureUnlocked, productColumns } from "./transactions";
 import type { PoolConnection } from "mysql2/promise";
 
-export const productSelect = `SELECT p.*,c.name category_name,l.code location_code,${hierarchyFields} FROM products p JOIN categories c ON c.id=p.category_id JOIN locations l ON l.id=p.location_id ${hierarchyJoins}`;
+const productExtras = `c.name category_name,l.code location_code,${hierarchyFields}`;
+const productJoins = ` FROM products p JOIN categories c ON c.id=p.category_id JOIN locations l ON l.id=p.location_id ${hierarchyJoins}`;
+export const productSelect = `SELECT p.*,${productExtras}${productJoins}`;
+// Daftar barang tidak pernah menampilkan foto, jadi kolom image tidak ikut diambil.
+export const productListSelect = `SELECT ${productColumns},${productExtras}${productJoins}`;
 
 export async function getProduct(id: number) {
   const [p] = await rows<Product>(productSelect + " WHERE p.id=?", [id]);
@@ -155,20 +159,26 @@ export async function editProduct(
     await checkCategory(updated.category_id, conn);
 
     await execute(
-      "UPDATE products SET name=?,category_id=?,unit=?,location_id=?,description=?,image=?,active=?,movement_class=? WHERE id=?",
+      "UPDATE products SET name=?,category_id=?,unit=?,location_id=?,description=?,active=?,movement_class=? WHERE id=?",
       [
         updated.name,
         updated.category_id,
         updated.unit,
         locationId,
         updated.description ?? null,
-        updated.image ?? null,
         updated.active ? 1 : 0,
         updated.movement_class ?? null,
         id,
       ],
       conn,
     );
+    // Foto hanya diubah bila dikirim; null berarti foto dihapus.
+    if (input.image !== undefined)
+      await execute(
+        "UPDATE products SET image=? WHERE id=?",
+        [input.image, id],
+        conn,
+      );
     await publish(conn, "product");
     return { id };
   });

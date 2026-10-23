@@ -2,30 +2,68 @@ import { hierarchyJoins, hierarchyFields } from "./locations";
 import type { PoolConnection } from "mysql2/promise";
 import { rows, execute, transaction, publish } from "@/lib/db";
 import { AppError } from "@/lib/errors";
-import { calculateStock } from "@/lib/stock";
+import { calculateStock, roundStock, validAmount } from "@/lib/stock";
 import type { Product, StockTransaction } from "@/types";
+// Semua kolom barang kecuali image: foto base64 (hingga ±1,5 MB) hanya dibutuhkan halaman detail/edit.
+export const productColumns =
+  "p.id,p.sku,p.name,p.category_id,p.unit,p.movement_class,p.stock,p.location_id,p.qr_token,p.description,p.active,p.created_at,p.updated_at";
+type LockedProduct = Omit<Product, "image" | "category_name">;
+const lockedSelect = `SELECT ${productColumns},l.code location_code,${hierarchyFields} FROM products p JOIN locations l ON l.id=p.location_id ${hierarchyJoins}`;
 export async function lockProduct(id: number, conn: PoolConnection) {
-  const [product] = await rows<Product>(
-    `SELECT p.*,l.code location_code,${hierarchyFields} FROM products p JOIN locations l ON l.id=p.location_id ${hierarchyJoins} WHERE p.id=? FOR UPDATE`,
+  const [product] = await rows<LockedProduct>(
+    lockedSelect + " WHERE p.id=? FOR UPDATE",
     [id],
     conn,
   );
   if (!product) throw new AppError("NOT_FOUND", "Barang tidak ditemukan.", 404);
   return product;
 }
-export async function ensureUnlocked(product: Product, conn: PoolConnection) {
+const pendingError = (
+  product: LockedProduct,
+  pending: Pick<StockTransaction, "transaction_number">,
+) =>
+  new AppError(
+    "PRODUCT_PENDING",
+    `Barang masih menunggu proses. ${product.name}. Nomor transaksi: ${pending.transaction_number}. Selesaikan transaksi sebelumnya terlebih dahulu.`,
+    409,
+    { product, transaction: pending },
+  );
+const stockEmptyError = (product: LockedProduct) =>
+  new AppError(
+    "STOCK_EMPTY",
+    `STOK HABIS. ${product.name}. Stok: 0 ${product.unit}.`,
+    409,
+    { product },
+  );
+export async function ensureUnlocked(
+  product: LockedProduct,
+  conn: PoolConnection,
+) {
   const [pending] = await rows<StockTransaction>(
     "SELECT * FROM stock_transactions WHERE product_id=? AND status='PENDING' LIMIT 1 FOR UPDATE",
     [product.id],
     conn,
   );
-  if (pending)
+  if (pending) throw pendingError(product, pending);
+}
+async function lockByToken(token: string, conn: PoolConnection) {
+  const [identity] = await rows<{ id: number }>(
+    "SELECT id FROM products WHERE qr_token=?",
+    [token],
+    conn,
+  );
+  if (!identity) throw new AppError("QR_NOT_FOUND", "QR tidak terdaftar.", 404);
+  const p = await lockProduct(identity.id, conn);
+  if (p.qr_token !== token)
     throw new AppError(
-      "PRODUCT_PENDING",
-      `Barang masih menunggu proses. ${product.name}. Nomor transaksi: ${pending.transaction_number}. Selesaikan transaksi sebelumnya terlebih dahulu.`,
-      409,
-      { product, transaction: pending },
+      "QR_NOT_FOUND",
+      "QR telah diganti. Gunakan label terbaru.",
+      404,
     );
+  if (!p.active)
+    throw new AppError("PRODUCT_INACTIVE", "Barang sudah tidak aktif.", 409);
+  await ensureUnlocked(p, conn);
+  return p;
 }
 export async function nextNumber(type: string, conn: PoolConnection) {
   const day = new Intl.DateTimeFormat("en-CA", {
@@ -47,32 +85,75 @@ export async function nextNumber(type: string, conn: PoolConnection) {
   );
   return `${kind}-${day.replaceAll("-", "")}-${String(sequence.last_number).padStart(4, "0")}`;
 }
-export async function scan(token: string, mode: "IN" | "OUT", userId: number) {
+// Aplikasi scanner HP: cek barang setelah QR dibaca, sebelum user mengisi jumlah.
+export async function lookup(token: string, mode: "IN" | "OUT") {
+  const [p] = await rows<LockedProduct>(lockedSelect + " WHERE p.qr_token=?", [
+    token,
+  ]);
+  if (!p) throw new AppError("QR_NOT_FOUND", "QR tidak terdaftar.", 404);
+  if (!p.active)
+    throw new AppError("PRODUCT_INACTIVE", "Barang sudah tidak aktif.", 409);
+  const [pending] = await rows<Pick<StockTransaction, "transaction_number">>(
+    "SELECT transaction_number FROM stock_transactions WHERE product_id=? AND status='PENDING' LIMIT 1",
+    [p.id],
+  );
+  if (pending) throw pendingError(p, pending);
+  if (mode === "OUT" && p.stock === 0) throw stockEmptyError(p);
+  return p;
+}
+// Aplikasi scanner HP: transaksi langsung APPROVED dan stok langsung berubah.
+export async function record(
+  input: {
+    qr_token: string;
+    mode: "IN" | "OUT";
+    quantity: number;
+    reservation_number?: string;
+  },
+  userId: number,
+) {
   return transaction(async (conn) => {
-    const [identity] = await rows<{ id: number }>(
-      "SELECT id FROM products WHERE qr_token=?",
-      [token],
+    const p = await lockByToken(input.qr_token, conn);
+    const after = calculateStock(p.stock, input.quantity, input.mode, p.unit);
+    const number = await nextNumber(input.mode, conn);
+    await execute(
+      "UPDATE products SET stock=? WHERE id=?",
+      [after, p.id],
       conn,
     );
-    if (!identity)
-      throw new AppError("QR_NOT_FOUND", "QR tidak terdaftar.", 404);
-    const p = await lockProduct(identity.id, conn);
-    if (p.qr_token !== token)
-      throw new AppError(
-        "QR_NOT_FOUND",
-        "QR telah diganti. Gunakan label terbaru.",
-        404,
-      );
-    if (!p.active)
-      throw new AppError("PRODUCT_INACTIVE", "Barang sudah tidak aktif.", 409);
-    await ensureUnlocked(p, conn);
-    if (mode === "OUT" && p.stock === 0)
-      throw new AppError(
-        "STOCK_EMPTY",
-        `STOK HABIS. ${p.name}. Stok: 0 ${p.unit}.`,
-        409,
-        { product: p },
-      );
+    const result = await execute(
+      "INSERT INTO stock_transactions(transaction_number,product_id,location_id,location_code,room_name,transaction_type,quantity,stock_before,stock_after,status,reservation_number,approved_at,actor_id) VALUES (?,?,?,?,?,?,?,?,?,'APPROVED',?,UTC_TIMESTAMP(3),?)",
+      [
+        number,
+        p.id,
+        p.location_id,
+        p.location_code,
+        p.room_name,
+        input.mode,
+        input.quantity,
+        p.stock,
+        after,
+        input.reservation_number ?? null,
+        userId,
+      ],
+      conn,
+    );
+    await publish(conn, "transaction");
+    return {
+      id: result.insertId,
+      transaction_number: number,
+      mode: input.mode,
+      quantity: input.quantity,
+      stock_before: p.stock,
+      stock_after: after,
+      reservation_number: input.reservation_number ?? null,
+      product: p,
+    };
+  });
+}
+export async function scan(token: string, mode: "IN" | "OUT", userId: number) {
+  return transaction(async (conn) => {
+    const p = await lockByToken(token, conn);
+    if (mode === "OUT" && p.stock === 0) throw stockEmptyError(p);
     const number = await nextNumber(mode, conn);
     const result = await execute(
       "INSERT INTO stock_transactions(transaction_number,product_id,location_id,location_code,room_name,transaction_type,actor_id) VALUES (?,?,?,?,?,?,?)",
@@ -115,6 +196,7 @@ export async function setQuantity(id: number, quantity: number) {
       product.stock,
       quantity,
       item.transaction_type as "IN" | "OUT",
+      product.unit,
     );
     await execute(
       "UPDATE stock_transactions SET quantity=? WHERE id=?",
@@ -141,6 +223,7 @@ export async function approve(
       product.stock,
       amount,
       item.transaction_type as "IN" | "OUT",
+      product.unit,
     );
     await execute(
       "UPDATE products SET stock=? WHERE id=?",
@@ -195,7 +278,12 @@ export async function adjustment(
         "Stok berubah sejak ditampilkan. Muat ulang lalu periksa kembali.",
         409,
       );
-    const delta = input.physical_stock - p.stock;
+    if (!validAmount(input.physical_stock, p.unit))
+      throw new AppError(
+        "INVALID_QUANTITY",
+        `Stok fisik untuk satuan ${p.unit} harus bilangan bulat.`,
+      );
+    const delta = roundStock(input.physical_stock - p.stock);
     if (delta === 0)
       throw new AppError("NO_CHANGE", "Stok fisik sama dengan stok sistem.");
     const number = await nextNumber("ADJUSTMENT", conn);
@@ -225,7 +313,7 @@ export async function adjustment(
   });
 }
 export const transactionSelect =
-  "SELECT t.*,p.name,p.sku,p.unit,p.stock FROM stock_transactions t JOIN products p ON p.id=t.product_id";
+  "SELECT t.*,p.name,p.sku,p.unit,p.stock,u.username actor_name FROM stock_transactions t JOIN products p ON p.id=t.product_id LEFT JOIN users u ON u.id=t.actor_id";
 export function pending() {
   return rows<StockTransaction>(
     transactionSelect + " WHERE t.status='PENDING' ORDER BY t.scanned_at,t.id",

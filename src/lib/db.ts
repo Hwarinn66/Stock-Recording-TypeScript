@@ -4,7 +4,22 @@ import mysql, {
   type RowDataPacket,
   type ResultSetHeader,
 } from "mysql2/promise";
+import { readFileSync } from "node:fs";
+import { waitUntil } from "@vercel/functions";
 const globalDb = globalThis as unknown as { warehousePool?: Pool };
+// Vercel membekukan instance begitu respons terkirim; koneksi yang masih terbuka
+// tidak pernah ditutup dan menumpuk di server MySQL (Aiven gratis: maks. 76).
+const serverless = Boolean(process.env.VERCEL);
+// Database cloud (mis. Aiven) mewajibkan TLS. DB_SSL_CA = isi sertifikat CA (PEM,
+// untuk dashboard Vercel; "\n" literal diubah menjadi baris baru) atau
+// DB_SSL_CA_FILE = path file PEM (untuk script di komputer sendiri).
+function ssl() {
+  const file = process.env.DB_SSL_CA_FILE;
+  const ca = (file ? readFileSync(file, "utf8") : process.env.DB_SSL_CA)
+    ?.replace(/\\n/g, "\n")
+    .trim();
+  return ca ? { ca, rejectUnauthorized: true } : undefined;
+}
 export const db =
   globalDb.warehousePool ??
   mysql.createPool({
@@ -13,17 +28,28 @@ export const db =
     user: process.env.DB_USER,
     password: process.env.DB_PASSWORD,
     database: process.env.DB_NAME,
+    ssl: ssl(),
     waitForConnections: true,
-    connectionLimit: 10,
+    connectionLimit:
+      Number(process.env.DB_CONNECTION_LIMIT) || (serverless ? 5 : 10),
+    // Serverless: koneksi menganggur ditutup pembersih pool mysql2 (tiap 1 detik).
+    ...(serverless && { maxIdle: 0 }),
     timezone: "Z",
     dateStrings: true,
     decimalNumbers: true,
     multipleStatements: false,
   });
-if (!globalDb.warehousePool)
+if (!globalDb.warehousePool) {
   db.pool.on("connection", (connection) => {
     connection.query("SET time_zone = '+00:00'");
   });
+  // Tahan instance sebentar setelah koneksi dilepas agar pembersih sempat menutupnya
+  // sebelum dibekukan. Di luar Vercel waitUntil tidak melakukan apa pun.
+  if (serverless)
+    db.pool.on("release", () => {
+      waitUntil(new Promise((resolve) => setTimeout(resolve, 1200)));
+    });
+}
 if (process.env.NODE_ENV !== "production") globalDb.warehousePool = db;
 export type Connection = Pool | PoolConnection;
 export async function rows<T = Record<string, unknown>>(
