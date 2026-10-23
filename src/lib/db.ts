@@ -8,7 +8,7 @@ import { readFileSync } from "node:fs";
 import { waitUntil } from "@vercel/functions";
 const globalDb = globalThis as unknown as { warehousePool?: Pool };
 // Vercel membekukan instance begitu respons terkirim; koneksi yang masih terbuka
-// tidak pernah ditutup dan menumpuk di server MySQL (Aiven gratis: maks. 76).
+// tidak pernah ditutup dan menumpuk di server MySQL (Aiven gratis: maks. ±46).
 const serverless = Boolean(process.env.VERCEL);
 // Database cloud (mis. Aiven) mewajibkan TLS. DB_SSL_CA = isi sertifikat CA (PEM,
 // untuk dashboard Vercel; "\n" literal diubah menjadi baris baru) atau

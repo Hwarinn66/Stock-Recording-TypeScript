@@ -12,7 +12,7 @@ Vercel "tidur", dan dashboard di Vercel mengecek perubahan stok **setiap 15 deti
 > - Kuota Vercel per bulan: 360 GB-jam memori, 4 jam CPU, 1 juta request. Pantau di
 >   **Vercel → project → Usage**.
 > - Aiven Free: 1 CPU, 1 GB RAM, **disk 1 GB** (foto barang paling cepat memenuhinya),
->   maksimal 76 koneksi, tanpa SLA/support, dan **dimatikan bila lama tidak dipakai**
+>   maksimal ±46 koneksi, tanpa SLA/support, dan **dimatikan bila lama tidak dipakai**
 >   (ada email pemberitahuan; nyalakan lagi lewat console).
 > - Karena tanpa jaminan, **backup database rutin** (lihat bagian akhir).
 
@@ -54,7 +54,10 @@ perubahan terbaru sudah di-commit dan di-push ke branch `main`. File `.env*` dan
    pilih paket **Hobby**.
 2. **Add New… → Project → Import** repo `Stock-Recording-TypeScript`. Framework terdeteksi
    otomatis (Next.js); build command tidak perlu diubah.
-3. Buka **Environment Variables** dan isi:
+3. Buka **Environment Variables** dan isi tabel di bawah. Cara cepat: bila file
+   `.env.vercel` sudah dibuat, ganti `NAMA-PROJECT` di dalamnya, salin **seluruh isinya**,
+   lalu tempel ke kolom **Key** pertama. Vercel memecahnya menjadi variabel satu per satu.
+   `DB_SSL_CA` di file itu ditulis satu baris dengan `\n`; aplikasi mengubahnya kembali.
 
    | Nama              | Isi                                                                                        |
    | ----------------- | ------------------------------------------------------------------------------------------ |
