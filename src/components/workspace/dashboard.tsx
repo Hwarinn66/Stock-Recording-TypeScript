@@ -268,20 +268,24 @@ export function Dashboard() {
       <div className="grid grid-cols-2 xl:grid-cols-4 gap-4 mb-8">
         {cards.map(({ label, key, Icon, href, note, alert }) => {
           const body = (
-            <Card className="h-full transition group-hover:border-emerald-300 group-hover:shadow-md">
-              <div className="flex items-center justify-between gap-2">
-                <p className="text-xs text-slate-500">{label}</p>
-                <Icon
-                  size={17}
-                  className={alert ? "text-red-400" : "text-emerald-600"}
-                />
+            <Card className="h-full transition duration-200 group-hover:-translate-y-0.5 group-hover:border-emerald-200 group-hover:shadow-lift">
+              <div className="flex items-start justify-between gap-2">
+                <p className="text-xs font-medium text-slate-500">{label}</p>
+                <span
+                  className={`grid size-9 shrink-0 place-items-center rounded-xl ring-1 ring-inset ${alert ? "bg-red-50 text-red-500 ring-red-100" : "bg-emerald-50 text-emerald-600 ring-emerald-100"}`}
+                >
+                  <Icon size={17} />
+                </span>
               </div>
-              <p className="text-3xl font-bold mt-4 tabular-nums">
+              <p className="mt-2 text-3xl font-bold tracking-tight tabular-nums text-slate-900">
                 {stats.data?.[key] ?? "—"}
               </p>
-              <p className="mt-2 flex items-center gap-1 text-[10px] text-slate-400 group-hover:text-emerald-700">
+              <p className="mt-3 flex items-center gap-1 text-[11px] text-slate-400 transition group-hover:text-emerald-700">
                 {note}
-                <ArrowRight size={11} />
+                <ArrowRight
+                  size={12}
+                  className="transition group-hover:translate-x-0.5"
+                />
               </p>
             </Card>
           );
@@ -345,8 +349,14 @@ export function Dashboard() {
               <ArrowRight size={14} />
             </Link>
           </Card>
-          <Card className="mt-5 bg-emerald-900 text-white border-0">
-            <ScanLine className="mb-4 text-emerald-300" />
+          <Card className="relative mt-5 overflow-hidden border-0 bg-linear-to-br from-emerald-700 via-emerald-800 to-emerald-950 text-white shadow-lift">
+            <span
+              aria-hidden
+              className="pointer-events-none absolute -right-10 -top-10 size-40 rounded-full bg-emerald-400/20 blur-2xl"
+            />
+            <span className="mb-4 grid size-10 place-items-center rounded-xl bg-white/10 ring-1 ring-inset ring-white/15">
+              <ScanLine className="text-emerald-200" />
+            </span>
             <h3 className="font-bold">Dari rak ke dashboard.</h3>
             <p className="text-xs leading-5 text-emerald-100/70 mt-2">
               Buka aplikasi Warehouse Scanner di HP, pilih IN atau OUT, scan

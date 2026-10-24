@@ -6,7 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { stockLabel } from "@/lib/stock";
 import { livePollSeconds } from "@/hooks/use-live";
-import { RefreshCw } from "lucide-react";
+import { AlertTriangle, Inbox, RefreshCw } from "lucide-react";
 /** `url` null = belum ada yang perlu dimuat (mis. belum memilih barang). */
 export function useData<T>(url: string | null, version = 0) {
   const [data, setData] = useState<T>();
@@ -52,15 +52,20 @@ export function Heading({
   children?: React.ReactNode;
 }) {
   return (
-    <div className="no-print flex flex-wrap items-center justify-between gap-4 mb-7">
+    <div className="no-print mb-7 flex flex-wrap items-end justify-between gap-4">
       <div>
-        <p className="text-[10px] font-semibold tracking-[.2em] text-emerald-700 mb-2">
+        <p className="mb-2 inline-flex items-center gap-2 text-[10px] font-semibold tracking-[.2em] text-emerald-700">
+          <span className="size-1.5 rounded-full bg-emerald-500" />
           WAREHOUSE OPERATIONS
         </p>
-        <h1 className="text-2xl lg:text-3xl font-bold">{title}</h1>
-        <p className="text-slate-500 text-sm mt-2">{description}</p>
+        <h1 className="text-2xl font-bold tracking-tight lg:text-[28px]">
+          {title}
+        </h1>
+        <p className="mt-1.5 max-w-2xl text-sm text-slate-500">
+          {description}
+        </p>
       </div>
-      <div className="flex gap-2">{children}</div>
+      <div className="flex flex-wrap items-center gap-2">{children}</div>
     </div>
   );
 }
@@ -75,37 +80,52 @@ export function State({
 }) {
   if (error)
     return (
-      <Card className="text-red-700 mb-5" role="alert">
+      <Card
+        className="mb-5 flex items-start gap-3 border-red-200 bg-red-50/70 text-red-700"
+        role="alert"
+      >
+        <AlertTriangle className="mt-0.5 size-4 shrink-0" />
         {error}
       </Card>
     );
   if (loading)
     return (
-      <Card className="text-slate-400 animate-pulse">
-        Memuat data dari database…
+      <Card aria-busy="true" aria-label="Memuat data">
+        <div className="animate-pulse space-y-3">
+          <div className="h-3 w-1/3 rounded-full bg-slate-200/80" />
+          <div className="h-3 w-2/3 rounded-full bg-slate-100" />
+          <div className="h-3 w-1/2 rounded-full bg-slate-100" />
+        </div>
       </Card>
     );
   if (empty)
     return (
-      <Card className="text-center text-slate-400 py-12">
+      <Card className="flex flex-col items-center gap-3 py-12 text-center text-slate-400">
+        <span className="grid size-11 place-items-center rounded-full bg-slate-100 text-slate-400">
+          <Inbox className="size-5" />
+        </span>
         Belum ada data yang sesuai.
       </Card>
     );
   return null;
 }
+// Label berbentuk pil dengan titik warna: hijau aman, kuning menipis, merah habis.
+const pill =
+  "inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 text-[10px] font-bold ring-1 ring-inset before:size-1.5 before:rounded-full before:bg-current before:content-['']";
 export function StockBadge({ stock }: { stock: number }) {
+  const label = stockLabel(stock);
   return (
     <span
-      className={`text-[10px] font-bold px-2 py-1 rounded ${stock <= 2 ? "text-red-700 bg-red-50" : "text-emerald-700 bg-emerald-50"}`}
+      className={`${pill} ${label === "STOK HABIS" ? "bg-red-50 text-red-700 ring-red-200" : label === "STOK MENIPIS" ? "bg-amber-50 text-amber-700 ring-amber-200" : "bg-emerald-50 text-emerald-700 ring-emerald-200"}`}
     >
-      {stockLabel(stock)}
+      {label}
     </span>
   );
 }
 export function Badge({ value }: { value: string }) {
   return (
     <span
-      className={`text-[10px] font-bold px-2 py-1 rounded ${value === "IN" || value === "APPROVED" ? "bg-emerald-50 text-emerald-700" : value === "OUT" ? "bg-blue-50 text-blue-700" : value === "PENDING" ? "bg-amber-50 text-amber-700" : "bg-slate-100 text-slate-500"}`}
+      className={`${pill} ${value === "IN" || value === "APPROVED" ? "bg-emerald-50 text-emerald-700 ring-emerald-200" : value === "OUT" ? "bg-blue-50 text-blue-700 ring-blue-200" : value === "PENDING" ? "bg-amber-50 text-amber-700 ring-amber-200" : value === "ADJUSTMENT" ? "bg-violet-50 text-violet-700 ring-violet-200" : "bg-slate-100 text-slate-500 ring-slate-200"}`}
     >
       {value}
     </span>
@@ -163,10 +183,10 @@ export function Tabs({
   return (
     <div
       role="tablist"
-      className="no-print flex flex-wrap gap-1 border-b border-slate-200 mb-5"
+      className="no-print mb-5 inline-flex max-w-full flex-wrap gap-1 rounded-xl bg-slate-200/50 p-1 ring-1 ring-inset ring-slate-200/70"
     >
       {items.map((t) => {
-        const style = `-mb-px border-b-2 px-4 py-2.5 text-sm ${t.active ? "border-emerald-600 font-semibold text-emerald-800" : "border-transparent text-slate-500 hover:text-slate-800"}`;
+        const style = `rounded-lg px-3.5 py-2 text-sm font-medium transition ${t.active ? "bg-white text-emerald-800 shadow-[0_1px_3px_rgb(15_23_42/0.12)] ring-1 ring-slate-200/80" : "text-slate-600 hover:bg-white/60 hover:text-slate-900"}`;
         return t.href ? (
           <Link
             key={t.key}
@@ -196,10 +216,10 @@ export function Tabs({
 export function Live({ connected }: { connected: boolean }) {
   return (
     <span
-      className={`flex items-center gap-2 text-xs ${connected ? "text-emerald-700" : "text-amber-700"}`}
+      className={`inline-flex items-center gap-2 rounded-full px-3 py-1.5 text-xs font-medium ring-1 ring-inset ${connected ? "bg-emerald-50 text-emerald-700 ring-emerald-200/80" : "bg-amber-50 text-amber-700 ring-amber-200/80"}`}
     >
       <span
-        className={`size-2 rounded-full ${connected ? "bg-emerald-500" : "bg-amber-500"}`}
+        className={`size-2 rounded-full ring-4 ${connected ? "bg-emerald-500 ring-emerald-500/20" : "bg-amber-500 ring-amber-500/20"}`}
       />
       {livePollSeconds
         ? connected
