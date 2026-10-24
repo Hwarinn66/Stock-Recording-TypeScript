@@ -6,8 +6,6 @@ import {
   Warehouse,
   LayoutDashboard,
   Package,
-  MapPin,
-  SlidersHorizontal,
   Settings,
   LogOut,
   ClipboardList,
@@ -19,14 +17,13 @@ import { Button } from "./ui/button";
 import { Input } from "./ui/input";
 import { toast } from "sonner";
 // [alamat, label, ikon, awalan alamat lain yang termasuk menu ini]. Fitur kecil
-// digabung: Tambah Barang & stok menipis di Barang, riwayat & no reservasi di
-// Riwayat, kategori di Pengaturan, transaksi pending di Dashboard.
+// digabung: Tambah Barang, stok menipis & koreksi stok (di detail barang) di
+// Barang, riwayat & no reservasi di Riwayat, kategori di Pengaturan, transaksi
+// pending di Dashboard. Lokasi barang dipilih lewat form Tambah/Edit Barang.
 const links = [
   ["/", "Dashboard", LayoutDashboard, []],
   ["/products", "Barang", Package, ["/products/", "/low-stock"]],
-  ["/history/in", "Riwayat", ClipboardList, ["/history/", "/reservations"]],
-  ["/adjustments", "Koreksi Stok", SlidersHorizontal, ["/adjustments/"]],
-  ["/locations", "Lokasi Gudang", MapPin, []],
+  ["/history", "Riwayat", ClipboardList, ["/history/", "/reservations"]],
   ["/settings", "Pengaturan", Settings, []],
 ] as const;
 function isActive(path: string, href: string, prefixes: readonly string[]) {

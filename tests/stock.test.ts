@@ -136,6 +136,19 @@ test("mobile record: quantity digits, 7-digit reservation only for OUT", async (
   assert.equal(ok({ mode: "IN", quantity: 5, stock: 10 }), false);
 });
 
+test("history revision accepts quantity and/or 7-digit reservation only", async () => {
+  const { reviseSchema } = await import("../src/validators");
+  const ok = (v: object) => reviseSchema.safeParse(v).success;
+  assert.equal(ok({ quantity: 3 }), true);
+  assert.equal(ok({ reservation_number: "0012345" }), true);
+  assert.equal(ok({ quantity: 2.5, reservation_number: "1234567", reason: "salah ketik" }), true);
+  assert.equal(ok({}), false, "harus ada yang direvisi");
+  assert.equal(ok({ reason: "hanya alasan" }), false);
+  assert.equal(ok({ reservation_number: "123456" }), false);
+  assert.equal(ok({ quantity: 0 }), false);
+  assert.equal(ok({ quantity: 3, stock: 10 }), false, "field lain ditolak");
+});
+
 test("ALLOWED_ORIGINS tolerates spaces after commas", async () => {
   const { checkOrigin } = await import("../src/lib/auth");
   process.env.APP_URL = "https://localhost:3000";

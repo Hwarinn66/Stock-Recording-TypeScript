@@ -1,12 +1,11 @@
 "use client";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import Link from "next/link";
 import { toast } from "sonner";
 import {
   ArrowDownToLine,
   ArrowUpFromLine,
   Package,
-  Boxes,
   Clock3,
   TriangleAlert,
   ClipboardCheck,
@@ -230,16 +229,30 @@ export function Dashboard() {
     "products?stock=low&limit=5&sort=stock&direction=asc",
     version,
   );
+  const settings = useData<{ timezone?: string }>("settings");
+  // Tanggal hari ini (zona waktu aplikasi) untuk tautan riwayat "hari ini".
+  const [today, setToday] = useState("");
+  useEffect(() => {
+    setToday(
+      new Intl.DateTimeFormat("en-CA", {
+        timeZone: settings.data?.timezone || "Asia/Jakarta",
+        year: "numeric",
+        month: "2-digit",
+        day: "2-digit",
+      }).format(new Date()),
+    );
+  }, [settings.data?.timezone]);
+  const day = today ? `?from=${today}&to=${today}` : "";
+  // Setiap kotak bisa diklik dan membuka halaman datanya.
   const cards = [
-    ["Total Barang", "total_products", Package],
-    ["Total Stock", "total_stock", Boxes],
-    ["Barang Masuk Hari Ini", "incoming", ArrowDownToLine],
-    ["Barang Keluar Hari Ini", "outgoing", ArrowUpFromLine],
-    ["Stock Menipis (1–2)", "low_stock", TriangleAlert],
-    ["Stock Habis", "zero_stock", PackageX],
-    ["Transaksi Pending", "pending", Clock3],
-    ["Transaksi Hari Ini", "today", ClipboardCheck],
-  ] as const;
+    { label: "Total Barang", key: "total_products", Icon: Package, href: "/products", note: "Buka daftar barang" },
+    { label: "Barang Masuk Hari Ini", key: "incoming", Icon: ArrowDownToLine, href: "/history/in" + day, note: "Buka riwayat masuk hari ini" },
+    { label: "Barang Keluar Hari Ini", key: "outgoing", Icon: ArrowUpFromLine, href: "/history/out" + day, note: "Buka riwayat keluar hari ini" },
+    { label: "Stock Menipis (1–2)", key: "low_stock", Icon: TriangleAlert, href: "/products?stock=low", note: "Buka barang stok menipis", alert: true },
+    { label: "Stock Habis", key: "zero_stock", Icon: PackageX, href: "/products?stock=zero", note: "Buka barang stok habis", alert: true },
+    { label: "Transaksi Pending", key: "pending", Icon: Clock3, href: "#pending", note: "Lihat transaksi menunggu" },
+    { label: "Transaksi Hari Ini", key: "today", Icon: ClipboardCheck, href: "/history" + day, note: "Buka semua transaksi hari ini" },
+  ];
   return (
     <>
       <Heading
@@ -253,33 +266,40 @@ export function Dashboard() {
       </Heading>
       <State error={stats.error} loading={!stats.data && stats.loading} />
       <div className="grid grid-cols-2 xl:grid-cols-4 gap-4 mb-8">
-        {cards.map(([label, key, Icon], i) => (
-          <Card key={key}>
-            <div className="flex items-center justify-between gap-2">
-              <p className="text-xs text-slate-500">{label}</p>
-              <Icon
-                size={17}
-                className={
-                  i === 4 || i === 5 ? "text-red-400" : "text-emerald-600"
-                }
-              />
-            </div>
-            <p className="text-3xl font-bold mt-4 tabular-nums">
-              {stats.data?.[key] ?? "—"}
-            </p>
-            <p className="mt-2 text-[10px] text-slate-400">
-              {i < 2
-                ? "Barang aktif"
-                : i === 4 || i === 5
-                  ? "Perlu perhatian"
-                  : "Data tersimpan di MySQL"}
-            </p>
-          </Card>
-        ))}
+        {cards.map(({ label, key, Icon, href, note, alert }) => {
+          const body = (
+            <Card className="h-full transition group-hover:border-emerald-300 group-hover:shadow-md">
+              <div className="flex items-center justify-between gap-2">
+                <p className="text-xs text-slate-500">{label}</p>
+                <Icon
+                  size={17}
+                  className={alert ? "text-red-400" : "text-emerald-600"}
+                />
+              </div>
+              <p className="text-3xl font-bold mt-4 tabular-nums">
+                {stats.data?.[key] ?? "—"}
+              </p>
+              <p className="mt-2 flex items-center gap-1 text-[10px] text-slate-400 group-hover:text-emerald-700">
+                {note}
+                <ArrowRight size={11} />
+              </p>
+            </Card>
+          );
+          const style = "group block rounded-xl focus-visible:outline-2 focus-visible:outline-emerald-600";
+          return href.startsWith("#") ? (
+            <a key={key} href={href} className={style}>
+              {body}
+            </a>
+          ) : (
+            <Link key={key} href={href} className={style}>
+              {body}
+            </Link>
+          );
+        })}
       </div>
       <RecentReservations version={version} />
       <div className="grid xl:grid-cols-[1fr_320px] gap-6">
-        <section>
+        <section id="pending" className="scroll-mt-6">
           {/* Daftar lengkap transaksi menunggu (alur scan lama) hanya di sini. */}
           <div className="flex items-center justify-between mb-4">
             <h2 className="text-lg font-bold">

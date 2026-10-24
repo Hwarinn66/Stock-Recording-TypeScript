@@ -18,6 +18,19 @@ export const reservationSchema = z
   .string()
   .regex(/^\d{7}$/, "No reservasi harus tepat 7 angka.");
 export const lookupSchema = z.object({ mode: z.enum(["IN", "OUT"]) });
+// Revisi transaksi IN/OUT yang salah input dari halaman Riwayat.
+export const reviseSchema = z
+  .object({
+    quantity: quantitySchema.optional(),
+    reservation_number: reservationSchema.optional(),
+    reason: z.string().trim().max(500).optional(),
+  })
+  .strict()
+  .refine(
+    (value) =>
+      value.quantity !== undefined || value.reservation_number !== undefined,
+    "Isi jumlah atau no reservasi yang direvisi.",
+  );
 // Transaksi dari aplikasi scanner HP: stok langsung berubah tanpa approval.
 export const recordSchema = z
   .object({

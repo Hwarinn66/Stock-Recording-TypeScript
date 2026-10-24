@@ -2,7 +2,12 @@ import { hierarchyJoins, hierarchyFields } from "./locations";
 import type { PoolConnection } from "mysql2/promise";
 import { rows, execute, transaction, publish } from "@/lib/db";
 import { AppError } from "@/lib/errors";
-import { calculateStock, roundStock, validAmount } from "@/lib/stock";
+import {
+  MAX_QUANTITY,
+  calculateStock,
+  roundStock,
+  validAmount,
+} from "@/lib/stock";
 import type { Product, StockTransaction } from "@/types";
 // Semua kolom barang kecuali image: foto base64 (hingga ±1,5 MB) hanya dibutuhkan halaman detail/edit.
 export const productColumns =
@@ -256,6 +261,114 @@ export async function cancel(id: number) {
     );
     await publish(conn, "cancelled");
     return { id };
+  });
+}
+/**
+ * Revisi transaksi IN/OUT yang sudah tersimpan (salah ketik jumlah atau no reservasi).
+ * Stok barang disesuaikan sebesar selisih jumlah; jejak revisi ditambahkan ke notes.
+ */
+export async function revise(
+  id: number,
+  input: { quantity?: number; reservation_number?: string; reason?: string },
+  user: { id: number; username: string },
+) {
+  return transaction(async (conn) => {
+    const [identity] = await rows<{ product_id: number }>(
+      "SELECT product_id FROM stock_transactions WHERE id=?",
+      [id],
+      conn,
+    );
+    if (!identity)
+      throw new AppError("NOT_FOUND", "Transaksi tidak ditemukan.", 404);
+    // Urutan lock sama dengan jalur mutasi lain: product, lalu transaction.
+    const product = await lockProduct(identity.product_id, conn);
+    const [item] = await rows<StockTransaction>(
+      "SELECT * FROM stock_transactions WHERE id=? FOR UPDATE",
+      [id],
+      conn,
+    );
+    if (item.status !== "APPROVED" || item.transaction_type === "ADJUSTMENT")
+      throw new AppError(
+        "NOT_REVISABLE",
+        "Hanya transaksi barang masuk/keluar yang sudah tersimpan yang bisa direvisi.",
+        409,
+      );
+    if (!product.active)
+      throw new AppError("PRODUCT_INACTIVE", "Barang sudah tidak aktif.", 409);
+    await ensureUnlocked(product, conn);
+    const type = item.transaction_type;
+    const oldQuantity = item.quantity ?? 0;
+    let quantity = oldQuantity;
+    let stock = product.stock;
+    let itemAfter = item.stock_after;
+    let reservation = item.reservation_number;
+    const changes: string[] = [];
+    if (input.quantity !== undefined && input.quantity !== oldQuantity) {
+      if (!validAmount(input.quantity, product.unit))
+        throw new AppError(
+          "INVALID_QUANTITY",
+          `Jumlah untuk satuan ${product.unit} harus bilangan bulat.`,
+        );
+      quantity = input.quantity;
+      // IN lebih banyak → stok naik; OUT lebih banyak → stok turun.
+      const delta = roundStock(quantity - oldQuantity);
+      stock = roundStock(product.stock + (type === "IN" ? delta : -delta));
+      if (stock < 0)
+        throw new AppError(
+          "STOCK_NOT_ENOUGH",
+          `Revisi membuat stok minus. Stok saat ini: ${product.stock} ${product.unit}.`,
+          409,
+        );
+      if (stock > MAX_QUANTITY)
+        throw new AppError("STOCK_OVERFLOW", "Stok melampaui batas sistem.");
+      itemAfter = roundStock(
+        (item.stock_before ?? 0) + (type === "IN" ? quantity : -quantity),
+      );
+      changes.push(`jumlah ${oldQuantity} → ${quantity} ${product.unit}`);
+    }
+    if (
+      input.reservation_number !== undefined &&
+      input.reservation_number !== item.reservation_number
+    ) {
+      if (type !== "OUT")
+        throw new AppError(
+          "VALIDATION_ERROR",
+          "No reservasi hanya untuk barang keluar.",
+        );
+      reservation = input.reservation_number;
+      changes.push(
+        `no reservasi ${item.reservation_number ?? "—"} → ${reservation}`,
+      );
+    }
+    if (!changes.length)
+      throw new AppError("NO_CHANGE", "Tidak ada perubahan.");
+    const when = new Intl.DateTimeFormat("id-ID", {
+      timeZone: process.env.APP_TIMEZONE || "Asia/Jakarta",
+      dateStyle: "medium",
+      timeStyle: "short",
+    }).format(new Date());
+    const log = `Revisi ${when} oleh ${user.username}: ${changes.join(", ")}${input.reason ? ` (alasan: ${input.reason})` : ""}`;
+    const notes = item.notes ? `${item.notes}\n${log}` : log;
+    if (stock !== product.stock)
+      await execute(
+        "UPDATE products SET stock=? WHERE id=?",
+        [stock, product.id],
+        conn,
+      );
+    await execute(
+      "UPDATE stock_transactions SET quantity=?,stock_after=?,reservation_number=?,notes=? WHERE id=?",
+      [quantity, itemAfter, reservation, notes, id],
+      conn,
+    );
+    await publish(conn, "revised");
+    return {
+      id,
+      transaction_number: item.transaction_number,
+      quantity,
+      reservation_number: reservation,
+      stock,
+      notes,
+    };
   });
 }
 export async function adjustment(

@@ -1,9 +1,9 @@
 "use client";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import { Download, Plus } from "lucide-react";
 import { write, timestamp } from "@/lib/client";
-import { allowsDecimal, correction } from "@/lib/stock";
+import { allowsDecimal, correction, roundStock, validAmount } from "@/lib/stock";
 import { livePollSeconds, useLive } from "@/hooks/use-live";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
@@ -16,24 +16,38 @@ import type {
   StockTransaction,
 } from "@/types";
 import { Heading, State, Badge, Pager, Tabs, useData } from "./shared";
-type HistoryType = "in" | "out" | "adjustments" | "reservations";
+type HistoryType = "all" | "in" | "out" | "adjustments" | "reservations";
 export function HistoryPage({
   type,
   productId,
   compact = false,
   bare = false,
+  editable = false,
 }: {
   type: HistoryType;
   productId?: number;
   compact?: boolean;
   /** Tanpa judul, untuk dipasang di bawah tab halaman Riwayat. */
   bare?: boolean;
+  /** Nama barang bisa diklik untuk merevisi jumlah / no reservasi. */
+  editable?: boolean;
 }) {
+  const [editing, setEditing] = useState<StockTransaction>();
   const showReservation = type === "out" || type === "reservations";
   const { version } = useLive();
   const [q, setQ] = useState("");
   const [from, setFrom] = useState("");
   const [to, setTo] = useState("");
+  useEffect(() => {
+    // Tautan dari dashboard, mis. /history/in?from=2026-10-24&to=2026-10-24.
+    const params = new URLSearchParams(location.search);
+    const date = (key: string) => {
+      const value = params.get(key) ?? "";
+      return /^\d{4}-\d{2}-\d{2}$/.test(value) ? value : "";
+    };
+    setFrom(date("from"));
+    setTo(date("to"));
+  }, []);
   const [rack, setRack] = useState("");
   const [product, setProduct] = useState(productId ? String(productId) : "");
   const [status, setStatus] = useState("");
@@ -65,7 +79,9 @@ export function HistoryPage({
     setPage(1);
   };
   const title =
-    type === "in"
+    type === "all"
+      ? "Semua transaksi"
+      : type === "in"
       ? "Riwayat barang masuk"
       : type === "out"
         ? "Riwayat barang keluar"
@@ -81,7 +97,7 @@ export function HistoryPage({
           title={title}
           description={
             type === "reservations"
-              ? "Barang keluar dari aplikasi scanner HP. No reservasi adalah identitas pengambilan dan divisi pengambil barang."
+              ? "Barang keluar dari aplikasi scanner HP. No reservasi adalah identitas pengambilan dan divisi pengambil barang. Klik nama barang untuk merevisi jumlah atau no reservasi."
               : "Jejak transaksi lengkap, termasuk transaksi yang dibatalkan."
           }
         />
@@ -215,7 +231,22 @@ export function HistoryPage({
                   <td className="font-semibold">{t.transaction_number}</td>
                   <td>{timestamp(t.scanned_at, settings.data?.timezone)}</td>
                   <td>{t.sku}</td>
-                  <td>{t.name}</td>
+                  <td>
+                    {editable &&
+                    t.status === "APPROVED" &&
+                    t.transaction_type !== "ADJUSTMENT" ? (
+                      <button
+                        type="button"
+                        title="Klik untuk merevisi jumlah atau no reservasi"
+                        className="text-left font-semibold text-emerald-700 hover:underline"
+                        onClick={() => setEditing(t)}
+                      >
+                        {t.name}
+                      </button>
+                    ) : (
+                      t.name
+                    )}
+                  </td>
                   <td>{t.location_code}</td>
                   <td>{t.room_name || "— (histori lama)"}</td>
                   <td className="font-bold">{t.quantity ?? "—"}</td>
@@ -227,7 +258,7 @@ export function HistoryPage({
                   <td>
                     <Badge value={t.status} />
                   </td>
-                  <td className="max-w-xs whitespace-normal">
+                  <td className="max-w-xs whitespace-pre-line">
                     {t.notes || "—"}
                   </td>
                 </tr>
@@ -239,21 +270,204 @@ export function HistoryPage({
       {list.data && (
         <Pager page={page} total={list.data.total} onPage={setPage} />
       )}
+      {editing && (
+        <RevisionDialog
+          key={editing.id}
+          item={editing}
+          timezone={settings.data?.timezone}
+          onClose={() => setEditing(undefined)}
+          onSaved={() => void list.reload()}
+        />
+      )}
     </section>
+  );
+}
+/** Jendela revisi transaksi IN/OUT yang salah input (dibuka dengan klik nama barang). */
+function RevisionDialog({
+  item,
+  timezone,
+  onClose,
+  onSaved,
+}: {
+  item: StockTransaction;
+  timezone?: string;
+  onClose: () => void;
+  onSaved: () => void;
+}) {
+  const dialog = useRef<HTMLDialogElement>(null);
+  const outbound = item.transaction_type === "OUT";
+  const [quantity, setQuantity] = useState(String(item.quantity ?? ""));
+  const [reservation, setReservation] = useState(item.reservation_number ?? "");
+  const [reason, setReason] = useState("");
+  const [busy, setBusy] = useState(false);
+  useEffect(() => {
+    dialog.current?.showModal();
+  }, []);
+  const decimal = allowsDecimal(item.unit);
+  const amount = Number(quantity.replace(",", "."));
+  const quantityValid =
+    quantity.trim() !== "" && amount > 0 && validAmount(amount, item.unit);
+  const quantityChanged = quantityValid && amount !== item.quantity;
+  const reservationValid = !outbound || /^\d{7}$/.test(reservation);
+  const reservationChanged =
+    outbound && reservationValid && reservation !== (item.reservation_number ?? "");
+  // Stok ikut berubah sebesar selisih: IN lebih banyak → naik, OUT lebih banyak → turun.
+  const delta = quantityChanged
+    ? roundStock((amount - (item.quantity ?? 0)) * (outbound ? -1 : 1))
+    : 0;
+  const stockAfter = roundStock(item.stock + delta);
+  const error = !quantityValid
+    ? decimal
+      ? "Isi jumlah lebih dari 0 (maks. 3 angka di belakang koma)."
+      : "Isi jumlah bilangan bulat lebih dari 0."
+    : !reservationValid
+      ? "No reservasi harus tepat 7 angka."
+      : stockAfter < 0
+        ? `Revisi membuat stok minus (stok saat ini ${item.stock} ${item.unit}).`
+        : "";
+  return (
+    <dialog
+      ref={dialog}
+      onClose={onClose}
+      className="m-auto w-[min(92vw,32rem)] rounded-xl p-0 backdrop:bg-black/40"
+    >
+      <form
+        className="p-6"
+        onSubmit={async (e) => {
+          e.preventDefault();
+          if (error || (!quantityChanged && !reservationChanged)) return;
+          const summary = [
+            quantityChanged &&
+              `Jumlah: ${item.quantity} → ${amount} ${item.unit}`,
+            reservationChanged &&
+              `No reservasi: ${item.reservation_number ?? "—"} → ${reservation}`,
+            delta !== 0 &&
+              `Stok barang: ${item.stock} → ${stockAfter} ${item.unit}`,
+          ]
+            .filter(Boolean)
+            .join("\n");
+          if (!confirm(`Simpan revisi ${item.transaction_number}?\n\n${summary}`))
+            return;
+          setBusy(true);
+          try {
+            await write(
+              `transactions/${item.id}/revise`,
+              {
+                ...(quantityChanged ? { quantity: amount } : {}),
+                ...(reservationChanged ? { reservation_number: reservation } : {}),
+                ...(reason.trim() ? { reason: reason.trim() } : {}),
+              },
+              "PATCH",
+            );
+            toast.success(`${item.transaction_number} direvisi`);
+            onSaved();
+            dialog.current?.close();
+          } catch (e) {
+            toast.error((e as Error).message);
+          } finally {
+            setBusy(false);
+          }
+        }}
+      >
+        <h2 className="font-bold text-lg">Revisi transaksi</h2>
+        <p className="text-xs text-slate-500 mt-1">
+          {item.transaction_number} ·{" "}
+          {outbound ? "Barang keluar" : "Barang masuk"} ·{" "}
+          {timestamp(item.scanned_at, timezone)}
+        </p>
+        <div className="bg-slate-50 rounded-lg p-3 mt-4 mb-4">
+          <p className="font-mono text-sm font-bold">{item.sku}</p>
+          <p className="text-sm">{item.name}</p>
+          <p className="text-xs text-slate-500 mt-1">
+            Stok saat ini: {item.stock} {item.unit}
+          </p>
+        </div>
+        <label htmlFor="revise-quantity">
+          Jumlah {outbound ? "keluar" : "masuk"} ({item.unit})
+        </label>
+        <Input
+          id="revise-quantity"
+          type="number"
+          min="0"
+          step={decimal ? "0.001" : "1"}
+          inputMode={decimal ? "decimal" : "numeric"}
+          required
+          autoFocus
+          value={quantity}
+          onFocus={(e) => e.target.select()}
+          onChange={(e) => setQuantity(e.target.value)}
+          className="mb-4"
+        />
+        {outbound && (
+          <>
+            <label htmlFor="revise-reservation">No reservasi (7 angka)</label>
+            <Input
+              id="revise-reservation"
+              inputMode="numeric"
+              maxLength={7}
+              required
+              value={reservation}
+              onChange={(e) =>
+                setReservation(e.target.value.replace(/\D/g, "").slice(0, 7))
+              }
+              className="mb-4 font-mono"
+            />
+          </>
+        )}
+        <label htmlFor="revise-reason">Alasan revisi (opsional)</label>
+        <Input
+          id="revise-reason"
+          maxLength={500}
+          placeholder="mis. salah ketik jumlah"
+          value={reason}
+          onChange={(e) => setReason(e.target.value)}
+        />
+        {error ? (
+          <p className="text-sm text-red-600 mt-3">{error}</p>
+        ) : delta !== 0 ? (
+          <p className="text-sm mt-3">
+            Stok barang akan {delta > 0 ? "naik" : "turun"} {Math.abs(delta)}{" "}
+            {item.unit}: {item.stock} → <b>{stockAfter}</b>
+          </p>
+        ) : null}
+        <div className="flex justify-end gap-2 mt-6">
+          <Button
+            type="button"
+            variant="outline"
+            onClick={() => dialog.current?.close()}
+          >
+            Batal
+          </Button>
+          <Button
+            disabled={
+              busy || !!error || (!quantityChanged && !reservationChanged)
+            }
+          >
+            {busy ? "Menyimpan…" : "Simpan revisi"}
+          </Button>
+        </div>
+      </form>
+    </dialog>
   );
 }
 const historyTabs: { type: HistoryType; href: string; label: string; hint: string }[] = [
   {
+    type: "all",
+    href: "/history",
+    label: "Semua",
+    hint: "Semua transaksi: barang masuk, barang keluar, dan koreksi stok, termasuk yang dibatalkan. Klik nama barang untuk merevisi transaksi masuk/keluar.",
+  },
+  {
     type: "in",
     href: "/history/in",
     label: "Barang masuk",
-    hint: "Semua transaksi barang masuk, termasuk yang dibatalkan.",
+    hint: "Semua transaksi barang masuk, termasuk yang dibatalkan. Klik nama barang untuk merevisi jumlah yang salah input.",
   },
   {
     type: "out",
     href: "/history/out",
     label: "Barang keluar",
-    hint: "Semua transaksi barang keluar, termasuk yang dibatalkan.",
+    hint: "Semua transaksi barang keluar, termasuk yang dibatalkan. Klik nama barang untuk merevisi jumlah atau no reservasi yang salah input.",
   },
   {
     type: "reservations",
@@ -286,7 +500,12 @@ export function HistoryHub({ type }: { type: HistoryType }) {
         }))}
       />
       <p className="text-xs text-slate-500 -mt-2 mb-4">{tab.hint}</p>
-      <HistoryPage key={tab.type} type={tab.type} bare />
+      <HistoryPage
+        key={tab.type}
+        type={tab.type}
+        bare
+        editable={tab.type !== "adjustments"}
+      />
     </>
   );
 }
@@ -442,76 +661,76 @@ const legend = "text-xs font-semibold text-[#526272] mb-1.5";
 function signed(value: number) {
   return value > 0 ? `+${value}` : String(value);
 }
-export function AdjustmentsPage({ productId }: { productId?: number }) {
-  const { version } = useLive();
-  const [search, setSearch] = useState("");
-  const products = useData<{ items: InventoryProduct[] }>(
-    "products?limit=100&q=" + encodeURIComponent(search),
-    version,
-  );
-  const [selectedId, setSelectedId] = useState(productId);
-  // Barang terpilih dimuat langsung agar stok di web selalu terbaru (ikut update otomatis).
-  const product = useData<Product>(
-    selectedId ? "products/" + selectedId : null,
-    version,
-  );
-  const selected = product.data?.id === selectedId ? product.data : undefined;
+/** Koreksi stok satu barang (di halaman detail barang): ketik jumlah sebenarnya di gudang. */
+export function StockCorrection({
+  product,
+  onSaved,
+}: {
+  product: Product;
+  onSaved: () => Promise<void> | void;
+}) {
   const [actual, setActual] = useState("");
-  const [prefilledFor, setPrefilledFor] = useState<number>();
+  const [edited, setEdited] = useState(false);
+  const [prefilledFor, setPrefilledFor] = useState("");
   const [reason, setReason] = useState("");
   const [detail, setDetail] = useState("");
   const [busy, setBusy] = useState(false);
-  const [revision, setRevision] = useState(0);
-  // Kolom jumlah diisi stok di web saat barang dipilih; user cukup mengganti angkanya.
-  if (selected && prefilledFor !== selected.id) {
-    setPrefilledFor(selected.id);
-    setActual(String(selected.stock));
+  const section = useRef<HTMLElement>(null);
+  // Kolom jumlah diisi stok di web, dan ikut berubah selama user belum mengetik.
+  const prefillKey = `${product.id}:${product.stock}`;
+  if (!edited && prefilledFor !== prefillKey) {
+    setPrefilledFor(prefillKey);
+    setActual(String(product.stock));
   }
-  const decimal = allowsDecimal(selected?.unit);
+  useEffect(() => {
+    // Dari tautan "Koreksi stok" di daftar barang (/products/:id#koreksi).
+    if (location.hash === "#koreksi")
+      section.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+  }, []);
+  const decimal = allowsDecimal(product.unit);
   const result =
-    selected && actual.trim() !== ""
-      ? correction(selected.stock, Number(actual.replace(",", ".")), selected.unit)
+    actual.trim() !== ""
+      ? correction(product.stock, Number(actual.replace(",", ".")), product.unit)
       : undefined;
   const preview = result && "after" in result ? result : undefined;
   const invalid = result && "error" in result && !result.same ? result.error : "";
   const notes = detail.trim() ? `${reason}: ${detail.trim()}` : reason;
   const needsDetail = reason === "Lainnya" && detail.trim().length < 3;
-  const options = products.data?.items ?? [];
   return (
-    <>
-      <Heading
-        title="Koreksi stok"
-        description="Samakan stok di web dengan jumlah barang yang sebenarnya ada di gudang, misalnya karena barang rusak, hilang, atau hasil stock opname."
-      />
-      <Card className="mb-9">
+    <section id="koreksi" ref={section} className="scroll-mt-6">
+      <h2 className="font-bold text-lg">Koreksi stok</h2>
+      <p className="text-xs text-slate-500 mt-1 mb-4">
+        Samakan stok di web dengan jumlah barang yang sebenarnya ada di gudang,
+        misalnya karena barang rusak, hilang, atau hasil stock opname.
+      </p>
+      <Card>
         <form
           className="grid lg:grid-cols-2 gap-8"
           onSubmit={async (e) => {
             e.preventDefault();
-            if (!selected || !preview || !reason || needsDetail) return;
+            if (!preview || !reason || needsDetail) return;
             if (
               !confirm(
-                `Simpan koreksi stok?\n\n${selected.sku} · ${selected.name}\nStok di web: ${selected.stock} → ${preview.after} ${selected.unit} (selisih ${signed(preview.delta)})\nAlasan: ${notes}`,
+                `Simpan koreksi stok?\n\n${product.sku} · ${product.name}\nStok di web: ${product.stock} → ${preview.after} ${product.unit} (selisih ${signed(preview.delta)})\nAlasan: ${notes}`,
               )
             )
               return;
             setBusy(true);
             try {
               await write("adjustments", {
-                product_id: selected.id,
-                expected_stock: selected.stock,
+                product_id: product.id,
+                expected_stock: product.stock,
                 physical_stock: preview.after,
                 notes,
               });
               toast.success(
-                `Stok ${selected.sku} sekarang ${preview.after} ${selected.unit} (selisih ${signed(preview.delta)})`,
+                `Stok ${product.sku} sekarang ${preview.after} ${product.unit} (selisih ${signed(preview.delta)})`,
               );
               setReason("");
               setDetail("");
-              setRevision((v) => v + 1);
-              await product.reload();
-              // Isi ulang kolom jumlah dengan stok terbaru.
-              setPrefilledFor(undefined);
+              await onSaved();
+              // Kolom jumlah kembali mengikuti stok terbaru.
+              setEdited(false);
             } catch (e) {
               toast.error((e as Error).message);
             } finally {
@@ -520,53 +739,38 @@ export function AdjustmentsPage({ productId }: { productId?: number }) {
           }}
         >
           <div>
-            <label htmlFor="adjust-search">
-              1. Cari barang (nama / Kode Barang / rak)
+            <label htmlFor="correction-actual">
+              Jumlah sebenarnya di gudang ({product.unit})
             </label>
             <Input
-              id="adjust-search"
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              className="mb-3"
-            />
-            <select
-              aria-label="Pilih barang"
-              className="w-full"
+              id="correction-actual"
+              type="number"
+              min="0"
+              max="2147483647"
+              step={decimal ? "0.001" : "1"}
+              inputMode={decimal ? "decimal" : "numeric"}
               required
-              value={selectedId ?? ""}
+              value={actual}
+              onFocus={(e) => e.target.select()}
               onChange={(e) => {
-                setSelectedId(Number(e.target.value) || undefined);
-                setActual("");
+                setEdited(true);
+                setActual(e.target.value);
               }}
-            >
-              <option value="">Pilih barang</option>
-              {selected && !options.some((p) => p.id === selected.id) && (
-                <option value={selected.id}>
-                  {selected.sku} · {selected.name} · {selected.location_code}
-                </option>
-              )}
-              {options.map((p) => (
-                <option key={p.id} value={p.id}>
-                  {p.sku} · {p.name} · {p.location_code}
-                </option>
-              ))}
-            </select>
-            <State error={products.error || product.error} />
-            {selected && (
-              <div className="bg-slate-50 rounded-lg p-4 mt-4">
-                <p className="font-mono font-bold">{selected.sku}</p>
-                <p className="text-sm">{selected.name}</p>
-                <p className="text-xs text-slate-500 mt-1">
-                  {selected.room_name} · {selected.location_code}
-                </p>
-              </div>
+              className="text-lg font-semibold"
+            />
+            {invalid ? (
+              <p className="text-sm text-red-600 mt-2">{invalid}</p>
+            ) : (
+              <p className="text-xs text-slate-500 mt-2">
+                Ganti angka ini dengan jumlah yang benar-benar ada di gudang.
+                Selisihnya dihitung otomatis.
+                {decimal ? " Boleh berkoma (maks. 3 angka di belakang koma)." : ""}
+              </p>
             )}
             <div className="grid grid-cols-3 bg-slate-50 rounded-lg p-4 mt-4 text-center">
               <div>
                 <p className="text-xs text-slate-500">Stok di web</p>
-                <p className="text-xl font-bold mt-2">
-                  {selected?.stock ?? "—"}
-                </p>
+                <p className="text-xl font-bold mt-2">{product.stock}</p>
               </div>
               <div>
                 <p className="text-xs text-slate-500">Jumlah sebenarnya</p>
@@ -583,35 +787,8 @@ export function AdjustmentsPage({ productId }: { productId?: number }) {
             </div>
           </div>
           <div>
-            <label htmlFor="correction-actual">
-              2. Jumlah sebenarnya di gudang
-              {selected ? ` (${selected.unit})` : ""}
-            </label>
-            <Input
-              id="correction-actual"
-              type="number"
-              min="0"
-              max="2147483647"
-              step={decimal ? "0.001" : "1"}
-              inputMode={decimal ? "decimal" : "numeric"}
-              required
-              disabled={!selected}
-              value={actual}
-              onFocus={(e) => e.target.select()}
-              onChange={(e) => setActual(e.target.value)}
-              className="text-lg font-semibold"
-            />
-            {invalid ? (
-              <p className="text-sm text-red-600 mt-2">{invalid}</p>
-            ) : (
-              <p className="text-xs text-slate-500 mt-2">
-                {selected
-                  ? `Ganti angka ini dengan jumlah yang benar-benar ada di gudang. Selisihnya dihitung otomatis.${decimal ? " Boleh berkoma (maks. 3 angka di belakang koma)." : ""}`
-                  : "Pilih barang terlebih dahulu."}
-              </p>
-            )}
-            <fieldset className="mt-5">
-              <legend className={legend}>3. Alasan (wajib)</legend>
+            <fieldset>
+              <legend className={legend}>Alasan (wajib)</legend>
               <div className="flex flex-wrap gap-2 mb-3">
                 {correctionReasons.map((r) => (
                   <button
@@ -646,8 +823,7 @@ export function AdjustmentsPage({ productId }: { productId?: number }) {
           </div>
         </form>
       </Card>
-      <HistoryPage key={revision} type="adjustments" compact />
-    </>
+    </section>
   );
 }
 export function SettingsPage() {

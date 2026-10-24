@@ -14,6 +14,7 @@ import {
   adjustment,
   lookup,
   record,
+  revise,
 } from "../../src/services/transactions";
 import { history } from "../../src/services/reports";
 import { importProducts, readProductRows } from "../../src/services/product-import";
@@ -568,4 +569,82 @@ test("CSV import: ERP location, movement label and exact Kg decimals", async (t)
     assert.equal((await placed("IMP-NOLOC")).code, "A.01.01.003");
     assert.equal((await rows("SELECT id FROM rooms WHERE name='Belum Ditempatkan'")).length, 0);
   });
+});
+
+test("history revision: fix quantity or reservation of a saved IN/OUT", async (t) => {
+  const admin = { id: user, username: "test" };
+  type Tx = { quantity: number; stock_after: number; reservation_number: string | null; notes: string | null };
+  const tx = async (id: number) =>
+    (await rows<Tx>("SELECT * FROM stock_transactions WHERE id=?", [id]))[0];
+  await editProduct(product, { active: true });
+  const current = (await p()).stock;
+  await adjustment(
+    { product_id: product, expected_stock: current, physical_stock: 10, notes: "awal tes revisi" },
+    user,
+  );
+  const inbound = await record({ qr_token: token, mode: "IN", quantity: 5 }, user);
+  const outbound = await record(
+    { qr_token: token, mode: "OUT", quantity: 4, reservation_number: "1234567" },
+    user,
+  );
+  assert.equal((await p()).stock, 11);
+  await t.test("IN quantity 5 → 3 lowers stock by 2", async () => {
+    const r = await revise(inbound.id, { quantity: 3, reason: "salah ketik" }, admin);
+    assert.equal(r.stock, 9);
+    assert.equal((await p()).stock, 9);
+    const row = await tx(inbound.id);
+    assert.equal(row.quantity, 3);
+    assert.equal(row.stock_after, 13);
+    assert.match(row.notes ?? "", /oleh test: jumlah 5 → 3 .* \(alasan: salah ketik\)/);
+  });
+  await t.test("OUT reservation fix leaves stock unchanged", async () => {
+    await revise(outbound.id, { reservation_number: "7654321" }, admin);
+    assert.equal((await p()).stock, 9);
+    const row = await tx(outbound.id);
+    assert.equal(row.reservation_number, "7654321");
+    assert.match(row.notes ?? "", /no reservasi 1234567 → 7654321/);
+  });
+  await t.test("OUT quantity 4 → 2 returns 2 to stock", async () => {
+    await revise(outbound.id, { quantity: 2 }, admin);
+    assert.equal((await p()).stock, 11);
+    // Stok sesudah transaksi ini dihitung ulang dari stok sebelumnya (15 - 2).
+    assert.equal((await tx(outbound.id)).stock_after, 13);
+  });
+  await t.test("revision that would make stock negative is rejected", async () => {
+    await assert.rejects(revise(outbound.id, { quantity: 50 }, admin), {
+      code: "STOCK_NOT_ENOUGH",
+    });
+    assert.equal((await p()).stock, 11);
+    assert.equal((await tx(outbound.id)).quantity, 2);
+  });
+  await t.test("invalid revisions are rejected", async () => {
+    await assert.rejects(
+      revise(inbound.id, { reservation_number: "1111111" }, admin),
+      { code: "VALIDATION_ERROR" },
+    );
+    await assert.rejects(revise(inbound.id, { quantity: 3 }, admin), {
+      code: "NO_CHANGE",
+    });
+    await assert.rejects(revise(inbound.id, { quantity: 1.5 }, admin), {
+      code: "INVALID_QUANTITY",
+    });
+    const [adj] = await rows<{ id: number }>(
+      "SELECT id FROM stock_transactions WHERE product_id=? AND transaction_type='ADJUSTMENT' ORDER BY id DESC LIMIT 1",
+      [product],
+    );
+    await assert.rejects(revise(adj.id, { quantity: 1 }, admin), {
+      code: "NOT_REVISABLE",
+    });
+    assert.equal((await p()).stock, 11);
+  });
+});
+
+test("history 'Semua' lists every transaction type", async () => {
+  const [{ total }] = await rows<{ total: number }>(
+    "SELECT COUNT(*) total FROM stock_transactions",
+  );
+  const all = await history(null, listSchema.parse({ limit: 100 }));
+  assert.equal(all.total, total);
+  const types = new Set(all.items.map((item) => item.transaction_type));
+  for (const type of ["IN", "OUT", "ADJUSTMENT"]) assert.ok(types.has(type as "IN"), type);
 });

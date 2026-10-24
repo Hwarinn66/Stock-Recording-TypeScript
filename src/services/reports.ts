@@ -135,13 +135,18 @@ export function dateBoundary(day: string, next = false) {
   }
   return new Date(utc).toISOString().slice(0, 19).replace("T", " ");
 }
+/** `type` null = semua jenis transaksi (tab "Semua" di halaman Riwayat). */
 export async function history(
-  type: string,
+  type: string | null,
   f: Filters,
   reservationsOnly = false,
 ) {
-  const where = ["t.transaction_type=?"];
-  const args: unknown[] = [type];
+  const where: string[] = [];
+  const args: unknown[] = [];
+  if (type) {
+    where.push("t.transaction_type=?");
+    args.push(type);
+  }
   if (reservationsOnly) where.push("t.reservation_number IS NOT NULL");
   if (f.q) {
     where.push(
@@ -169,7 +174,7 @@ export async function history(
     where.push("t.scanned_at<?");
     args.push(dateBoundary(f.to, true));
   }
-  const clause = " WHERE " + where.join(" AND ");
+  const clause = where.length ? " WHERE " + where.join(" AND ") : "";
   const sorts: Record<Filters["sort"], string> = {
     id: "t.id",
     scanned_at: "t.scanned_at",

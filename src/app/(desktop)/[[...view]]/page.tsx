@@ -5,8 +5,6 @@ import {
   ProductForm,
   ProductDetail,
   HistoryHub,
-  LocationManager,
-  AdjustmentsPage,
   SettingsPage,
 } from "@/components/workspace";
 export default async function Page({
@@ -20,7 +18,6 @@ export default async function Page({
   // Halaman kecil yang sudah digabung: alamat lama tetap berfungsi.
   if (key === "pending") redirect("/");
   if (key === "categories") redirect("/settings");
-  if (key === "history") redirect("/history/in");
   if (key === "products") return <ProductsPage />;
   if (key === "low-stock") return <ProductsPage low />;
   if (key === "products/new") return <ProductForm />;
@@ -29,14 +26,17 @@ export default async function Page({
     if (path.length === 2 || path[2] === "qr")
       return <ProductDetail id={Number(path[1])} qrOnly={path[2] === "qr"} />;
   }
+  if (key === "history") return <HistoryHub type="all" />;
   if (key === "history/in") return <HistoryHub type="in" />;
   if (key === "history/out") return <HistoryHub type="out" />;
   if (key === "history/adjustments") return <HistoryHub type="adjustments" />;
   if (key === "reservations") return <HistoryHub type="reservations" />;
-  if (key === "locations") return <LocationManager />;
-  if (key === "adjustments") return <AdjustmentsPage />;
+  // Halaman Lokasi Gudang dihapus; lokasi dipilih lewat form barang.
+  if (key === "locations") redirect("/products");
+  // Koreksi stok kini satu halaman dengan Edit Barang.
+  if (key === "adjustments") redirect("/products");
   if (path[0] === "adjustments" && /^\d+$/.test(path[1] || "") && path.length === 2)
-    return <AdjustmentsPage key={path[1]} productId={Number(path[1])} />;
+    redirect(`/products/${path[1]}/edit#koreksi`);
   if (key === "settings") return <SettingsPage />;
   notFound();
 }

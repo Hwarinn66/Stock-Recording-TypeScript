@@ -4,7 +4,7 @@ import { Fragment, useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
-import { Download, Printer, QrCode, Plus } from "lucide-react";
+import { ArrowLeft, Download, Printer, QrCode, Plus } from "lucide-react";
 import { api, write, timestamp } from "@/lib/client";
 import { useLive } from "@/hooks/use-live";
 import { Button } from "@/components/ui/button";
@@ -17,7 +17,7 @@ import type {
   LocationLookup,
 } from "@/types";
 import { Heading, State, StockBadge, Pager, Tabs, useData } from "./shared";
-import { HistoryPage } from "./management";
+import { HistoryPage, StockCorrection } from "./management";
 type Movement = Product["movement_class"];
 const movementLabel = (m: Movement) =>
   m === "FAST"
@@ -46,7 +46,11 @@ export function ProductsPage({ low = false }: { low?: boolean }) {
   const [sort, setSort] = useState("name");
   const [page, setPage] = useState(1);
   useEffect(() => {
-    setQ(new URLSearchParams(location.search).get("q") || "");
+    const params = new URLSearchParams(location.search);
+    setQ(params.get("q") || "");
+    // Tautan dari dashboard: /products?stock=low|zero membuka tab yang sesuai.
+    const filter = params.get("stock");
+    if (filter && ["low", "zero", "safe"].includes(filter)) setStock(filter);
   }, []);
   const params = new URLSearchParams({
     q,
@@ -286,9 +290,6 @@ export function ProductsPage({ low = false }: { low?: boolean }) {
                       <div className="flex gap-3 text-xs text-emerald-700">
                         <Link href={"/products/" + p.id}>Detail</Link>
                         <Link href={`/products/${p.id}/edit`}>Edit</Link>
-                        {!!p.active && (
-                          <Link href={`/adjustments/${p.id}`}>Koreksi stok</Link>
-                        )}
                         <Link
                           aria-label={"QR " + p.name}
                           href={`/products/${p.id}/qr`}
@@ -345,6 +346,9 @@ export function ProductForm({ id }: { id?: number }) {
   const [image, setImage] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  // Koreksi stok di halaman edit memakai data stok terbaru (ikut update otomatis).
+  const { version } = useLive();
+  const live = useData<Product>(id ? "products/" + id : null, version);
   useEffect(() => {
     if (id)
       api<Product>("products/" + id)
@@ -576,8 +580,9 @@ export function ProductForm({ id }: { id?: number }) {
               </div>
             </div>
             <div className="mt-5 p-4 rounded-lg bg-emerald-50 text-emerald-800 text-xs">
-              Stok dikelola melalui IN, OUT, atau Koreksi Stok. QR unik
-              dibuat otomatis saat barang disimpan.
+              {id
+                ? "Stok tidak diubah di form ini. Bila jumlah di gudang berbeda, gunakan Koreksi stok di bawah."
+                : "Stok awal barang baru adalah 0 dan bertambah lewat scan IN. QR unik dibuat otomatis saat barang disimpan."}
             </div>
             <div className="mt-6 flex gap-3 justify-end">
               <Button
@@ -612,6 +617,12 @@ export function ProductForm({ id }: { id?: number }) {
           </Card>
         </form>
       )}
+      {/* Koreksi stok satu halaman dengan Edit Barang (form terpisah, tidak boleh bersarang). */}
+      {id && live.data?.id === id && !!live.data.active && (
+        <div className="max-w-3xl mt-8">
+          <StockCorrection product={live.data} onSaved={live.reload} />
+        </div>
+      )}
     </>
   );
 }
@@ -622,12 +633,15 @@ export function ProductDetail({
   id: number;
   qrOnly?: boolean;
 }) {
+  const router = useRouter();
+  // Ikut update otomatis agar stok yang tampil selalu stok terbaru.
+  const { version } = useLive();
   const {
     data: p,
     error,
     loading,
     reload,
-  } = useData<Product>("products/" + id);
+  } = useData<Product>("products/" + id, version);
   const settings = useData<{ timezone: string }>("settings");
   const [rev, setRev] = useState(0);
   const [busy, setBusy] = useState(false);
@@ -639,16 +653,18 @@ export function ProductDetail({
         title={qrOnly ? "QR barang" : p.name}
         description={`${p.sku} · ${p.room_name} · ${p.location_code}`}
       >
-        {!!p.active && (
-          <Button variant="outline" asChild>
-            <Link href={`/adjustments/${id}`}>Koreksi Stok</Link>
-          </Button>
-        )}
         <Button variant="outline" asChild>
           <Link href={`/products/${id}/edit`}>Edit Barang</Link>
         </Button>
-        <Button variant="outline" asChild>
-          <Link href="/products">Daftar Barang</Link>
+        <Button
+          variant="outline"
+          // Kembali ke halaman sebelumnya; bila dibuka langsung, ke daftar barang.
+          onClick={() =>
+            history.length > 1 ? router.back() : router.push("/products")
+          }
+        >
+          <ArrowLeft />
+          Kembali
         </Button>
       </Heading>
       <div
@@ -753,6 +769,7 @@ export function ProductDetail({
         <div className="no-print mt-8 space-y-8">
           <HistoryPage type="in" productId={id} compact />
           <HistoryPage type="out" productId={id} compact />
+          <HistoryPage type="adjustments" productId={id} compact />
         </div>
       )}
     </>

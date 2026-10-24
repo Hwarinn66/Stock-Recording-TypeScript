@@ -82,6 +82,15 @@ async function handler(req: Request, { params }: Context) {
       }
       if (action === "cancel" && method === "POST")
         return ok(await stock.cancel(id), "Transaksi dibatalkan");
+      if (action === "revise" && method === "PATCH")
+        return ok(
+          await stock.revise(
+            id,
+            schemas.reviseSchema.parse(await body()),
+            user,
+          ),
+          "Transaksi direvisi",
+        );
     }
     if (resource === "products") {
       if (!key && method === "GET") {
@@ -154,20 +163,23 @@ async function handler(req: Request, { params }: Context) {
     if (
       resource === "history" &&
       method === "GET" &&
-      ["in", "out", "adjustments", "reservations"].includes(key)
+      ["all", "in", "out", "adjustments", "reservations"].includes(key)
     ) {
-      // "reservations" = barang keluar yang memiliki no reservasi.
+      // "reservations" = barang keluar yang memiliki no reservasi; "all" = semua jenis.
       const reservations = key === "reservations";
       const f = filter(),
         type =
-          key === "adjustments"
-            ? "ADJUSTMENT"
-            : reservations
-              ? "OUT"
-              : key.toUpperCase(),
+          key === "all"
+            ? null
+            : key === "adjustments"
+              ? "ADJUSTMENT"
+              : reservations
+                ? "OUT"
+                : key.toUpperCase(),
         result = await history(type, f, reservations);
       const columns = [
         "transaction_number",
+        ...(key === "all" ? ["transaction_type"] : []),
         "scanned_at",
         "approved_at",
         "cancelled_at",
