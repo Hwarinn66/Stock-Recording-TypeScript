@@ -11,7 +11,6 @@ import {
   ClipboardCheck,
   PackageX,
   ArrowRight,
-  ScanLine,
 } from "lucide-react";
 import { useLive } from "@/hooks/use-live";
 import { write, timestamp } from "@/lib/client";
@@ -20,7 +19,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card } from "@/components/ui/card";
 import type { StockTransaction, InventoryProduct } from "@/types";
-import { Heading, State, Badge, Live, useData, StockBadge } from "./shared";
+import { Heading, State, Badge, useData, StockBadge } from "./shared";
 function PendingCard({
   item,
   onChange,
@@ -223,7 +222,7 @@ function RecentReservations({ version }: { version: number }) {
   );
 }
 export function Dashboard() {
-  const { version, connected } = useLive();
+  const { version } = useLive();
   const stats = useData<Record<string, number>>("dashboard", version);
   const low = useData<{ items: InventoryProduct[] }>(
     "products?stock=low&limit=5&sort=stock&direction=asc",
@@ -255,11 +254,7 @@ export function Dashboard() {
   ];
   return (
     <>
-      <Heading
-        title="Dashboard gudang"
-        description="Pantau persediaan dan pergerakan barang dalam satu tempat."
-      >
-        <Live connected={connected} />
+      <Heading title="Dashboard gudang">
         <Button asChild>
           <Link href="/products/new">+ Tambah Barang</Link>
         </Button>
@@ -348,21 +343,6 @@ export function Dashboard() {
               Lihat stok menipis
               <ArrowRight size={14} />
             </Link>
-          </Card>
-          <Card className="relative mt-5 overflow-hidden border-0 bg-linear-to-br from-emerald-700 via-emerald-800 to-emerald-950 text-white shadow-lift">
-            <span
-              aria-hidden
-              className="pointer-events-none absolute -right-10 -top-10 size-40 rounded-full bg-emerald-400/20 blur-2xl"
-            />
-            <span className="mb-4 grid size-10 place-items-center rounded-xl bg-white/10 ring-1 ring-inset ring-white/15">
-              <ScanLine className="text-emerald-200" />
-            </span>
-            <h3 className="font-bold">Dari rak ke dashboard.</h3>
-            <p className="text-xs leading-5 text-emerald-100/70 mt-2">
-              Buka aplikasi Warehouse Scanner di HP, pilih IN atau OUT, scan
-              QR barang, lalu isi jumlah. Barang keluar wajib no reservasi.
-              Stok langsung diperbarui.
-            </p>
           </Card>
         </section>
       </div>

@@ -8,7 +8,7 @@ Untuk menjalankan secara online gratis (Vercel + database Aiven), ikuti [DEPLOY-
 
 Tambah barang → stok awal 0 + UUID QR otomatis → cetak label → buka aplikasi **Warehouse Scanner** di HP → pilih IN/OUT → scan QR → ketik jumlah (keyboard angka) → khusus OUT: ketik **no reservasi 7 angka** → Selesai → SQL transaction langsung memperbarui stok dan histori → dashboard menerima SSE. No reservasi adalah identitas pengambilan dan divisi pengambil; daftarnya tampil di dashboard dan menu **Riwayat → No reservasi**.
 
-Fitur: dashboard 8 indikator, master barang/kategori/ruangan/blok/rak/posisi, foto opsional tersimpan di MySQL, detail dan histori barang, regenerasi QR, label cetak, antrean multi-barang, adjustment stock opname dengan alasan, filter/search/sorting/pagination, CSV, soft disable barang, login server session, feedback suara/vibrasi HP. Semua data operasional berasal dari MySQL; browser tidak mengakses database.
+Fitur: dashboard 7 indikator, master barang/kategori/ruangan/blok/rak/posisi, foto opsional tersimpan di MySQL, detail dan histori barang, regenerasi QR, label cetak, antrean multi-barang, adjustment stock opname dengan alasan, filter/search/sorting/pagination, CSV, soft disable barang, login server session, feedback suara/vibrasi HP. Semua data operasional berasal dari MySQL; browser tidak mengakses database.
 
 ## Lokasi bertingkat (v2)
 
@@ -226,7 +226,7 @@ Lihat [Next.js CLI — HTTPS](https://nextjs.org/docs/app/api-reference/cli/next
 - **Dashboard**: setiap kotak angka bisa diklik dan membuka datanya (daftar barang, riwayat masuk/keluar/semua transaksi hari ini, tab stok menipis/habis, atau daftar transaksi menunggu).
 - **Riwayat**: satu menu dengan tab Semua, Barang masuk, Barang keluar, No reservasi, dan Koreksi stok. Filter tanggal juga bisa diisi lewat alamat, mis. `/history/in?from=2026-10-24&to=2026-10-24`. Semua status tersedia, filter tanggal berdasarkan `scanned_at` di timezone aplikasi. IN/OUT hari ini pada dashboard dihitung berdasarkan `approved_at`, hanya APPROVED. CSV mengekspor seluruh hasil filter, bukan hanya halaman saat ini. Waktu CSV adalah UTC dari database. Formula berbahaya pada CSV dinetralkan.
 - **Revisi transaksi**: di menu **Riwayat** (tab Barang masuk, Barang keluar, atau No reservasi) klik **nama barang** untuk memperbaiki jumlah dan/atau no reservasi (khusus barang keluar) yang salah input. Stok barang disesuaikan sebesar selisih jumlah (mis. keluar tercatat 5, sebenarnya 3 → stok naik 2) dan ditolak bila stok menjadi minus. Jejak revisi (waktu, user, perubahan, alasan) ditambahkan ke kolom Alasan. Transaksi pending, dibatalkan, dan koreksi stok tidak dapat direvisi. Stok sebelum/sesudah pada transaksi yang direvisi dihitung ulang dari stok sebelumnya; transaksi lain tidak diubah.
-- **Stok menipis / habis**: tab di halaman **Barang** (menipis = `<=2`, termasuk 0). **Kategori** dikelola di menu **Pengaturan**. Card dashboard memisahkan stok 1–2 dan stok 0. Total Stock menjumlahkan unit lintas barang; periksa satuan masing-masing saat menafsirkan total.
+- **Stok menipis / habis**: tab di halaman **Barang** (menipis = `<=2`, termasuk 0). **Kategori** dikelola di menu **Pengaturan**. Card dashboard memisahkan stok 1–2 dan stok 0.
 
 ## Konsistensi database dan keamanan
 

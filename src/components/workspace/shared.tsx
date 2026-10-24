@@ -5,7 +5,6 @@ import { api } from "@/lib/client";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { stockLabel } from "@/lib/stock";
-import { livePollSeconds } from "@/hooks/use-live";
 import { AlertTriangle, Inbox, RefreshCw } from "lucide-react";
 /** `url` null = belum ada yang perlu dimuat (mis. belum memilih barang). */
 export function useData<T>(url: string | null, version = 0) {
@@ -48,22 +47,20 @@ export function Heading({
   children,
 }: {
   title: string;
-  description: string;
+  description?: string;
   children?: React.ReactNode;
 }) {
   return (
     <div className="no-print mb-7 flex flex-wrap items-end justify-between gap-4">
       <div>
-        <p className="mb-2 inline-flex items-center gap-2 text-[10px] font-semibold tracking-[.2em] text-emerald-700">
-          <span className="size-1.5 rounded-full bg-emerald-500" />
-          WAREHOUSE OPERATIONS
-        </p>
         <h1 className="text-2xl font-bold tracking-tight lg:text-[28px]">
           {title}
         </h1>
-        <p className="mt-1.5 max-w-2xl text-sm text-slate-500">
-          {description}
-        </p>
+        {description && (
+          <p className="mt-1.5 max-w-2xl text-sm text-slate-500">
+            {description}
+          </p>
+        )}
       </div>
       <div className="flex flex-wrap items-center gap-2">{children}</div>
     </div>
@@ -211,24 +208,6 @@ export function Tabs({
         );
       })}
     </div>
-  );
-}
-export function Live({ connected }: { connected: boolean }) {
-  return (
-    <span
-      className={`inline-flex items-center gap-2 rounded-full px-3 py-1.5 text-xs font-medium ring-1 ring-inset ${connected ? "bg-emerald-50 text-emerald-700 ring-emerald-200/80" : "bg-amber-50 text-amber-700 ring-amber-200/80"}`}
-    >
-      <span
-        className={`size-2 rounded-full ring-4 ${connected ? "bg-emerald-500 ring-emerald-500/20" : "bg-amber-500 ring-amber-500/20"}`}
-      />
-      {livePollSeconds
-        ? connected
-          ? `Update otomatis tiap ${livePollSeconds} detik`
-          : "Menyambung ulang…"
-        : connected
-          ? "Realtime aktif"
-          : "Menyambung / polling 5s"}
-    </span>
   );
 }
 export function Refresh({ onClick }: { onClick: () => void }) {

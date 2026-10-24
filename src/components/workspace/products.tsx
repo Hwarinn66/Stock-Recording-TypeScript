@@ -75,10 +75,7 @@ export function ProductsPage({ low = false }: { low?: boolean }) {
   };
   return (
     <>
-      <Heading
-        title="Data barang"
-        description="Kelola barang, lokasi rak, dan label QR. Stok menipis dan stok habis ada di tab di bawah."
-      >
+      <Heading title="Data barang">
         <Button variant="outline" asChild>
           <a href={"/api/products?" + params + "&export=csv"}>
             <Download />

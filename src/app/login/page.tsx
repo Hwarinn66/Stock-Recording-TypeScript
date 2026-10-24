@@ -119,9 +119,6 @@ export default function Login() {
             {busy ? "Memproses…" : "LOGIN"}
             <ArrowRight />
           </Button>
-          <p className="mt-6 text-xs text-slate-400">
-            Akun dibuat melalui perintah setup di komputer. Lihat README.
-          </p>
         </form>
       </section>
     </main>

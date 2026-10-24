@@ -4,7 +4,7 @@ import { toast } from "sonner";
 import { Download, Plus } from "lucide-react";
 import { write, timestamp } from "@/lib/client";
 import { allowsDecimal, correction, roundStock, validAmount } from "@/lib/stock";
-import { livePollSeconds, useLive } from "@/hooks/use-live";
+import { useLive } from "@/hooks/use-live";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -450,47 +450,19 @@ function RevisionDialog({
     </dialog>
   );
 }
-const historyTabs: { type: HistoryType; href: string; label: string; hint: string }[] = [
-  {
-    type: "all",
-    href: "/history",
-    label: "Semua",
-    hint: "Semua transaksi: barang masuk, barang keluar, dan koreksi stok, termasuk yang dibatalkan. Klik nama barang untuk merevisi transaksi masuk/keluar.",
-  },
-  {
-    type: "in",
-    href: "/history/in",
-    label: "Barang masuk",
-    hint: "Semua transaksi barang masuk, termasuk yang dibatalkan. Klik nama barang untuk merevisi jumlah yang salah input.",
-  },
-  {
-    type: "out",
-    href: "/history/out",
-    label: "Barang keluar",
-    hint: "Semua transaksi barang keluar, termasuk yang dibatalkan. Klik nama barang untuk merevisi jumlah atau no reservasi yang salah input.",
-  },
-  {
-    type: "reservations",
-    href: "/reservations",
-    label: "No reservasi",
-    hint: "Barang keluar dari aplikasi scanner HP. No reservasi adalah identitas pengambilan dan divisi pengambil barang.",
-  },
-  {
-    type: "adjustments",
-    href: "/history/adjustments",
-    label: "Koreksi stok",
-    hint: "Koreksi stok karena barang rusak, hilang, kedaluwarsa, atau hasil stock opname.",
-  },
+const historyTabs: { type: HistoryType; href: string; label: string }[] = [
+  { type: "all", href: "/history", label: "Semua" },
+  { type: "in", href: "/history/in", label: "Barang masuk" },
+  { type: "out", href: "/history/out", label: "Barang keluar" },
+  { type: "reservations", href: "/reservations", label: "No reservasi" },
+  { type: "adjustments", href: "/history/adjustments", label: "Koreksi stok" },
 ];
 /** Satu halaman Riwayat: barang masuk, keluar, no reservasi, dan koreksi stok. */
 export function HistoryHub({ type }: { type: HistoryType }) {
   const tab = historyTabs.find((t) => t.type === type) ?? historyTabs[0];
   return (
     <>
-      <Heading
-        title="Riwayat"
-        description="Semua jejak pergerakan stok dalam satu tempat."
-      />
+      <Heading title="Riwayat" />
       <Tabs
         items={historyTabs.map((t) => ({
           key: t.type,
@@ -499,7 +471,6 @@ export function HistoryHub({ type }: { type: HistoryType }) {
           active: t.type === tab.type,
         }))}
       />
-      <p className="text-xs text-slate-500 -mt-2 mb-4">{tab.hint}</p>
       <HistoryPage
         key={tab.type}
         type={tab.type}
@@ -827,86 +798,11 @@ export function StockCorrection({
   );
 }
 export function SettingsPage() {
-  const { data, error, loading } = useData<{
-    timezone: string;
-    app_url: string;
-    cookie_secure: boolean;
-  }>("settings");
   return (
     <>
-      <Heading
-        title="Pengaturan"
-        description="Kategori barang, konfigurasi server, dan panduan aplikasi scanner HP."
-      />
-      <section className="mb-9">
-        <h2 className="font-bold text-lg">Kategori barang</h2>
-        <p className="text-xs text-slate-500 mt-1 mb-4">
-          Kelompokkan barang untuk memudahkan pencarian.
-        </p>
-        <CategoryManager />
-      </section>
-      <State error={error} loading={loading} />
-      <div className="grid lg:grid-cols-2 gap-5">
-        <Card>
-          <h2 className="font-bold mb-4">Konfigurasi aktif</h2>
-          <dl className="space-y-4">
-            {[
-              ["Timezone", data?.timezone],
-              ["APP_URL", data?.app_url],
-              [
-                "Cookie HTTPS",
-                data?.cookie_secure ? "Aktif" : "Nonaktif (HTTP lokal)",
-              ],
-              ["Database", "MySQL / MariaDB · mysql2"],
-              [
-                "Update dashboard",
-                livePollSeconds
-                  ? `Cek berkala tiap ${livePollSeconds} detik`
-                  : "Realtime (SSE) + fallback polling",
-              ],
-            ].map(([key, value]) => (
-              <div key={key}>
-                <dt className="text-xs text-slate-400">{key}</dt>
-                <dd className="mt-1">{value || "—"}</dd>
-              </div>
-            ))}
-          </dl>
-          <p className="text-xs text-slate-400 mt-6">
-            Diatur lewat environment variables: .env.local di komputer (lalu
-            restart), atau Settings → Environment Variables di Vercel (lalu
-            redeploy).
-          </p>
-        </Card>
-        <Card>
-          <h2 className="font-bold mb-4">Aplikasi scanner HP</h2>
-          <ol className="list-decimal pl-5 space-y-3 text-sm text-slate-600">
-            <li>
-              Pasang aplikasi Warehouse Scanner (APK) di HP Android.
-            </li>
-            <li>
-              Isi alamat server dengan alamat web ini
-              {data?.app_url ? (
-                <>
-                  {" "}
-                  <span className="font-mono">{data.app_url}</span>
-                </>
-              ) : null}
-              , lalu login.
-            </li>
-            <li>
-              Pilih IN atau OUT, scan QR barang, lalu ketik jumlah.
-            </li>
-            <li>
-              Untuk OUT, isi no reservasi 7 angka. Stok langsung diperbarui
-              setelah menekan Selesai.
-            </li>
-          </ol>
-          <p className="text-xs text-slate-400 mt-5">
-            Langkah build APK, HTTPS, firewall, dan troubleshooting lengkap
-            tersedia di README.md.
-          </p>
-        </Card>
-      </div>
+      <Heading title="Pengaturan" />
+      <h2 className="font-bold text-lg mb-4">Kategori barang</h2>
+      <CategoryManager />
     </>
   );
 }
