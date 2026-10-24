@@ -1,4 +1,5 @@
 "use client";
+import Link from "next/link";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api } from "@/lib/client";
 import { Button } from "@/components/ui/button";
@@ -144,6 +145,51 @@ export function Pager({
           Berikutnya
         </Button>
       </div>
+    </div>
+  );
+}
+/** Tab antar-bagian dalam satu halaman: tautan (punya URL sendiri) atau tombol filter. */
+export function Tabs({
+  items,
+}: {
+  items: {
+    key: string;
+    label: string;
+    active: boolean;
+    href?: string;
+    onClick?: () => void;
+  }[];
+}) {
+  return (
+    <div
+      role="tablist"
+      className="no-print flex flex-wrap gap-1 border-b border-slate-200 mb-5"
+    >
+      {items.map((t) => {
+        const style = `-mb-px border-b-2 px-4 py-2.5 text-sm ${t.active ? "border-emerald-600 font-semibold text-emerald-800" : "border-transparent text-slate-500 hover:text-slate-800"}`;
+        return t.href ? (
+          <Link
+            key={t.key}
+            href={t.href}
+            role="tab"
+            aria-selected={t.active}
+            className={style}
+          >
+            {t.label}
+          </Link>
+        ) : (
+          <button
+            key={t.key}
+            type="button"
+            role="tab"
+            aria-selected={t.active}
+            onClick={t.onClick}
+            className={style}
+          >
+            {t.label}
+          </button>
+        );
+      })}
     </div>
   );
 }

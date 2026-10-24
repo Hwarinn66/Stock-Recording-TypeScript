@@ -1,12 +1,10 @@
-import { notFound } from "next/navigation";
+import { notFound, redirect } from "next/navigation";
 import {
   Dashboard,
-  PendingPage,
   ProductsPage,
   ProductForm,
   ProductDetail,
-  HistoryPage,
-  LookupsPage,
+  HistoryHub,
   LocationManager,
   AdjustmentsPage,
   SettingsPage,
@@ -19,7 +17,10 @@ export default async function Page({
   const path = (await params).view || [];
   const key = path.join("/");
   if (!key) return <Dashboard />;
-  if (key === "pending") return <PendingPage />;
+  // Halaman kecil yang sudah digabung: alamat lama tetap berfungsi.
+  if (key === "pending") redirect("/");
+  if (key === "categories") redirect("/settings");
+  if (key === "history") redirect("/history/in");
   if (key === "products") return <ProductsPage />;
   if (key === "low-stock") return <ProductsPage low />;
   if (key === "products/new") return <ProductForm />;
@@ -28,11 +29,11 @@ export default async function Page({
     if (path.length === 2 || path[2] === "qr")
       return <ProductDetail id={Number(path[1])} qrOnly={path[2] === "qr"} />;
   }
-  if (key === "history/in") return <HistoryPage type="in" />;
-  if (key === "history/out") return <HistoryPage type="out" />;
-  if (key === "reservations") return <HistoryPage type="reservations" />;
+  if (key === "history/in") return <HistoryHub type="in" />;
+  if (key === "history/out") return <HistoryHub type="out" />;
+  if (key === "history/adjustments") return <HistoryHub type="adjustments" />;
+  if (key === "reservations") return <HistoryHub type="reservations" />;
   if (key === "locations") return <LocationManager />;
-  if (key === "categories") return <LookupsPage kind={key} />;
   if (key === "adjustments") return <AdjustmentsPage />;
   if (path[0] === "adjustments" && /^\d+$/.test(path[1] || "") && path.length === 2)
     return <AdjustmentsPage key={path[1]} productId={Number(path[1])} />;

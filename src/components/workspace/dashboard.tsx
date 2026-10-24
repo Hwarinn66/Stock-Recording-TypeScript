@@ -223,20 +223,6 @@ function RecentReservations({ version }: { version: number }) {
     </section>
   );
 }
-export function PendingPage() {
-  const { version, connected } = useLive();
-  return (
-    <>
-      <Heading
-        title="Transaksi menunggu"
-        description="Periksa quantity dan setujui pergerakan stok dari scanner."
-      >
-        <Live connected={connected} />
-      </Heading>
-      <PendingList version={version} />
-    </>
-  );
-}
 export function Dashboard() {
   const { version, connected } = useLive();
   const stats = useData<Record<string, number>>("dashboard", version);
@@ -294,6 +280,7 @@ export function Dashboard() {
       <RecentReservations version={version} />
       <div className="grid xl:grid-cols-[1fr_320px] gap-6">
         <section>
+          {/* Daftar lengkap transaksi menunggu (alur scan lama) hanya di sini. */}
           <div className="flex items-center justify-between mb-4">
             <h2 className="text-lg font-bold">
               Transaksi menunggu{" "}
@@ -301,9 +288,6 @@ export function Dashboard() {
                 {stats.data?.pending ?? 0}
               </span>
             </h2>
-            <Link href="/pending" className="text-xs text-emerald-700">
-              Lihat semua →
-            </Link>
           </div>
           <PendingList version={version} onChange={() => void stats.reload()} />
         </section>

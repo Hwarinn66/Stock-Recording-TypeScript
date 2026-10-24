@@ -31,22 +31,24 @@ test("only Kg items may use decimals (max 3), without rounding", () => {
   assert.throws(() => calculateStock(1, 1.5, "OUT", "Kg"), { code: "STOCK_NOT_ENOUGH" });
   assert.equal(quantitySchema.safeParse(2.125).success, true);
 });
-test("stock correction: reduce/add/set, Kg decimals exact, invalid amounts rejected", () => {
-  assert.deepEqual(correction(10, "reduce", 3, "Pcs"), { after: 7, delta: -3 });
-  assert.deepEqual(correction(10, "add", 2, "Pcs"), { after: 12, delta: 2 });
-  assert.deepEqual(correction(10, "set", 0, "Pcs"), { after: 0, delta: -10 });
-  assert.deepEqual(correction(548.8, "reduce", 0.3, "Kg"), { after: 548.5, delta: -0.3 });
-  assert.deepEqual(correction(0.1, "add", 0.2, "Kg"), { after: 0.3, delta: 0.2 });
-  for (const [mode, amount, unit] of [
-    ["reduce", 11, "Pcs"],
-    ["reduce", 0, "Pcs"],
-    ["add", 1.5, "Pcs"],
-    ["add", 0.0005, "Kg"],
-    ["set", -1, "Pcs"],
-    ["set", 10, "Pcs"],
-    ["add", 2147483647, "Pcs"],
+test("stock correction: user types the actual count, difference is computed", () => {
+  assert.deepEqual(correction(10, 8, "Pcs"), { after: 8, delta: -2 });
+  assert.deepEqual(correction(10, 12, "Pcs"), { after: 12, delta: 2 });
+  assert.deepEqual(correction(10, 0, "Pcs"), { after: 0, delta: -10 });
+  assert.deepEqual(correction(548.8, 548.5, "Kg"), { after: 548.5, delta: -0.3 });
+  assert.deepEqual(correction(0.1, 0.3, "Kg"), { after: 0.3, delta: 0.2 });
+  assert.deepEqual(correction(10, 10, "Pcs"), {
+    error: "Jumlah sama dengan stok di web.",
+    same: true,
+  });
+  for (const [actual, unit] of [
+    [8.5, "Pcs"],
+    [1.0005, "Kg"],
+    [-1, "Pcs"],
+    [2147483648, "Pcs"],
+    [NaN, "Pcs"],
   ] as const)
-    assert.ok("error" in correction(10, mode, amount, unit), `${mode} ${amount} ${unit}`);
+    assert.ok("error" in correction(10, actual, unit), `${actual} ${unit}`);
 });
 test("stock flags", () => {
   assert.equal(stockLabel(0), "STOK HABIS");

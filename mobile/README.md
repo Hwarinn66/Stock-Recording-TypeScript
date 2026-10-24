@@ -11,7 +11,7 @@ Aplikasi Flutter untuk scan QR barang di gudang. Terhubung langsung ke server we
 5. **No reservasi** (khusus OUT) — tepat 7 angka. Menjadi identitas pengambilan dan divisi pengambil barang.
 6. **Selesai** — stok langsung berubah di server (tanpa approval komputer). Layar hasil menampilkan nomor transaksi dan stok sebelum → sesudah. **Scan berikutnya** kembali ke kamera dengan mode yang sama.
 
-Dashboard admin menampilkan no reservasi di tabel "No reservasi terbaru" dan menu **No Reservasi**.
+Dashboard admin menampilkan no reservasi di tabel "No reservasi terbaru" dan menu **Riwayat → No reservasi**.
 
 ## Pasang di HP
 
@@ -69,4 +69,4 @@ lib/screens/result_screen.dart   Kirim transaksi & ringkasan hasil
 | Sertifikat HTTPS server tidak dipercaya | IP yang diketik tidak ada di sertifikat mkcert; buat ulang sertifikat dengan IP tersebut. |
 | Respons server tidak dikenali | Alamat server salah (port/path). Contoh benar: `https://10.185.200.148:3000`. |
 | Izin kamera ditolak | Pengaturan HP → Aplikasi → Warehouse Scanner → Izin → Kamera. |
-| Barang masih menunggu proses | Ada transaksi pending lama; approve/batalkan di menu Transaksi Pending di komputer. |
+| Barang masih menunggu proses | Ada transaksi pending lama; approve/batalkan di bagian Transaksi menunggu pada Dashboard web. |

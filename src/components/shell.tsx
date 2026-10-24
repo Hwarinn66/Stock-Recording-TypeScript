@@ -5,13 +5,7 @@ import { useState } from "react";
 import {
   Warehouse,
   LayoutDashboard,
-  Clock3,
   Package,
-  Plus,
-  ArrowDownToLine,
-  ArrowUpFromLine,
-  TriangleAlert,
-  Tags,
   MapPin,
   SlidersHorizontal,
   Settings,
@@ -24,20 +18,20 @@ import { write } from "@/lib/client";
 import { Button } from "./ui/button";
 import { Input } from "./ui/input";
 import { toast } from "sonner";
+// [alamat, label, ikon, awalan alamat lain yang termasuk menu ini]. Fitur kecil
+// digabung: Tambah Barang & stok menipis di Barang, riwayat & no reservasi di
+// Riwayat, kategori di Pengaturan, transaksi pending di Dashboard.
 const links = [
-  ["/", "Dashboard", LayoutDashboard],
-  ["/pending", "Transaksi Pending", Clock3],
-  ["/products", "Barang", Package],
-  ["/products/new", "Tambah Barang", Plus],
-  ["/history/in", "Riwayat Masuk", ArrowDownToLine],
-  ["/history/out", "Riwayat Keluar", ArrowUpFromLine],
-  ["/reservations", "No Reservasi", ClipboardList],
-  ["/low-stock", "Stock Menipis", TriangleAlert],
-  ["/categories", "Kategori", Tags],
-  ["/locations", "Lokasi Gudang", MapPin],
-  ["/adjustments", "Koreksi Stok", SlidersHorizontal],
-  ["/settings", "Pengaturan", Settings],
+  ["/", "Dashboard", LayoutDashboard, []],
+  ["/products", "Barang", Package, ["/products/", "/low-stock"]],
+  ["/history/in", "Riwayat", ClipboardList, ["/history/", "/reservations"]],
+  ["/adjustments", "Koreksi Stok", SlidersHorizontal, ["/adjustments/"]],
+  ["/locations", "Lokasi Gudang", MapPin, []],
+  ["/settings", "Pengaturan", Settings, []],
 ] as const;
+function isActive(path: string, href: string, prefixes: readonly string[]) {
+  return path === href || prefixes.some((p) => path === p || path.startsWith(p));
+}
 export function Shell({
   children,
   username,
@@ -63,12 +57,12 @@ export function Shell({
           WORKSPACE
         </p>
         <nav className="px-3 space-y-1 overflow-auto">
-          {links.map(([href, label, Icon]) => (
+          {links.map(([href, label, Icon, prefixes]) => (
             <Link
               key={href}
               href={href}
               onClick={() => setOpen(false)}
-              className={`flex gap-3 items-center px-3 py-2.5 rounded-lg text-[13px] ${path === href ? "bg-emerald-800/70 text-white" : "hover:bg-slate-800 hover:text-white"}`}
+              className={`flex gap-3 items-center px-3 py-2.5 rounded-lg text-[13px] ${isActive(path, href, prefixes) ? "bg-emerald-800/70 text-white" : "hover:bg-slate-800 hover:text-white"}`}
             >
               <Icon size={17} />
               {label}

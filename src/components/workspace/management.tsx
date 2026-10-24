@@ -3,8 +3,8 @@ import { useState } from "react";
 import { toast } from "sonner";
 import { Download, Plus } from "lucide-react";
 import { write, timestamp } from "@/lib/client";
-import { allowsDecimal, correction, type CorrectionMode } from "@/lib/stock";
-import { useLive } from "@/hooks/use-live";
+import { allowsDecimal, correction } from "@/lib/stock";
+import { livePollSeconds, useLive } from "@/hooks/use-live";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -15,15 +15,19 @@ import type {
   LocationLookup,
   StockTransaction,
 } from "@/types";
-import { Heading, State, Badge, Pager, useData } from "./shared";
+import { Heading, State, Badge, Pager, Tabs, useData } from "./shared";
+type HistoryType = "in" | "out" | "adjustments" | "reservations";
 export function HistoryPage({
   type,
   productId,
   compact = false,
+  bare = false,
 }: {
-  type: "in" | "out" | "adjustments" | "reservations";
+  type: HistoryType;
   productId?: number;
   compact?: boolean;
+  /** Tanpa judul, untuk dipasang di bawah tab halaman Riwayat. */
+  bare?: boolean;
 }) {
   const showReservation = type === "out" || type === "reservations";
   const { version } = useLive();
@@ -70,7 +74,7 @@ export function HistoryPage({
           : "Riwayat koreksi stok";
   return (
     <section>
-      {compact ? (
+      {bare ? null : compact ? (
         <h2 className="font-bold text-lg mb-4">{title}</h2>
       ) : (
         <Heading
@@ -238,7 +242,57 @@ export function HistoryPage({
     </section>
   );
 }
-export function LookupsPage({ kind }: { kind: "categories" }) {
+const historyTabs: { type: HistoryType; href: string; label: string; hint: string }[] = [
+  {
+    type: "in",
+    href: "/history/in",
+    label: "Barang masuk",
+    hint: "Semua transaksi barang masuk, termasuk yang dibatalkan.",
+  },
+  {
+    type: "out",
+    href: "/history/out",
+    label: "Barang keluar",
+    hint: "Semua transaksi barang keluar, termasuk yang dibatalkan.",
+  },
+  {
+    type: "reservations",
+    href: "/reservations",
+    label: "No reservasi",
+    hint: "Barang keluar dari aplikasi scanner HP. No reservasi adalah identitas pengambilan dan divisi pengambil barang.",
+  },
+  {
+    type: "adjustments",
+    href: "/history/adjustments",
+    label: "Koreksi stok",
+    hint: "Koreksi stok karena barang rusak, hilang, kedaluwarsa, atau hasil stock opname.",
+  },
+];
+/** Satu halaman Riwayat: barang masuk, keluar, no reservasi, dan koreksi stok. */
+export function HistoryHub({ type }: { type: HistoryType }) {
+  const tab = historyTabs.find((t) => t.type === type) ?? historyTabs[0];
+  return (
+    <>
+      <Heading
+        title="Riwayat"
+        description="Semua jejak pergerakan stok dalam satu tempat."
+      />
+      <Tabs
+        items={historyTabs.map((t) => ({
+          key: t.type,
+          label: t.label,
+          href: t.href,
+          active: t.type === tab.type,
+        }))}
+      />
+      <p className="text-xs text-slate-500 -mt-2 mb-4">{tab.hint}</p>
+      <HistoryPage key={tab.type} type={tab.type} bare />
+    </>
+  );
+}
+/** Kelola kategori barang; ditampilkan di halaman Pengaturan. */
+function CategoryManager() {
+  const kind = "categories";
   const list = useData<Lookup[]>(kind);
   const [editing, setEditing] = useState<Lookup>();
   const [name, setName] = useState("");
@@ -250,10 +304,6 @@ export function LookupsPage({ kind }: { kind: "categories" }) {
   );
   return (
     <>
-      <Heading
-        title="Kategori"
-        description="Kelompokkan barang untuk memudahkan pencarian."
-      />
       <div className="grid lg:grid-cols-[1fr_340px] gap-6">
         <div>
           <Input
@@ -379,16 +429,6 @@ export function LookupsPage({ kind }: { kind: "categories" }) {
     </>
   );
 }
-const correctionModes: { mode: CorrectionMode; label: string; hint: string }[] = [
-  { mode: "reduce", label: "Kurangi", hint: "Rusak, hilang, kedaluwarsa" },
-  { mode: "add", label: "Tambah", hint: "Ditemukan / kurang dicatat" },
-  { mode: "set", label: "Isi stok fisik", hint: "Hasil hitung stock opname" },
-];
-const quantityLabels: Record<CorrectionMode, string> = {
-  reduce: "3. Jumlah yang dikurangi",
-  add: "3. Jumlah yang ditambah",
-  set: "3. Stok fisik hasil hitung",
-};
 const correctionReasons = [
   "Rusak",
   "Hilang",
@@ -410,29 +450,30 @@ export function AdjustmentsPage({ productId }: { productId?: number }) {
     version,
   );
   const [selectedId, setSelectedId] = useState(productId);
-  // Barang terpilih dimuat langsung agar stok sistem selalu terbaru (ikut update otomatis).
+  // Barang terpilih dimuat langsung agar stok di web selalu terbaru (ikut update otomatis).
   const product = useData<Product>(
     selectedId ? "products/" + selectedId : null,
     version,
   );
   const selected = product.data?.id === selectedId ? product.data : undefined;
-  const [mode, setMode] = useState<CorrectionMode>("reduce");
-  const [quantity, setQuantity] = useState("");
+  const [actual, setActual] = useState("");
+  const [prefilledFor, setPrefilledFor] = useState<number>();
   const [reason, setReason] = useState("");
   const [detail, setDetail] = useState("");
   const [busy, setBusy] = useState(false);
   const [revision, setRevision] = useState(0);
+  // Kolom jumlah diisi stok di web saat barang dipilih; user cukup mengganti angkanya.
+  if (selected && prefilledFor !== selected.id) {
+    setPrefilledFor(selected.id);
+    setActual(String(selected.stock));
+  }
   const decimal = allowsDecimal(selected?.unit);
   const result =
-    selected && quantity.trim() !== ""
-      ? correction(
-          selected.stock,
-          mode,
-          Number(quantity.replace(",", ".")),
-          selected.unit,
-        )
+    selected && actual.trim() !== ""
+      ? correction(selected.stock, Number(actual.replace(",", ".")), selected.unit)
       : undefined;
   const preview = result && "after" in result ? result : undefined;
+  const invalid = result && "error" in result && !result.same ? result.error : "";
   const notes = detail.trim() ? `${reason}: ${detail.trim()}` : reason;
   const needsDetail = reason === "Lainnya" && detail.trim().length < 3;
   const options = products.data?.items ?? [];
@@ -440,7 +481,7 @@ export function AdjustmentsPage({ productId }: { productId?: number }) {
     <>
       <Heading
         title="Koreksi stok"
-        description="Samakan stok di web dengan jumlah barang di gudang, misalnya barang rusak, hilang, atau hasil stock opname."
+        description="Samakan stok di web dengan jumlah barang yang sebenarnya ada di gudang, misalnya karena barang rusak, hilang, atau hasil stock opname."
       />
       <Card className="mb-9">
         <form
@@ -450,7 +491,7 @@ export function AdjustmentsPage({ productId }: { productId?: number }) {
             if (!selected || !preview || !reason || needsDetail) return;
             if (
               !confirm(
-                `Simpan koreksi stok?\n\n${selected.sku} · ${selected.name}\nStok: ${selected.stock} → ${preview.after} ${selected.unit} (${signed(preview.delta)})\nAlasan: ${notes}`,
+                `Simpan koreksi stok?\n\n${selected.sku} · ${selected.name}\nStok di web: ${selected.stock} → ${preview.after} ${selected.unit} (selisih ${signed(preview.delta)})\nAlasan: ${notes}`,
               )
             )
               return;
@@ -463,13 +504,14 @@ export function AdjustmentsPage({ productId }: { productId?: number }) {
                 notes,
               });
               toast.success(
-                `Stok ${selected.sku} dikoreksi: ${selected.stock} → ${preview.after} ${selected.unit}`,
+                `Stok ${selected.sku} sekarang ${preview.after} ${selected.unit} (selisih ${signed(preview.delta)})`,
               );
-              setQuantity("");
               setReason("");
               setDetail("");
               setRevision((v) => v + 1);
               await product.reload();
+              // Isi ulang kolom jumlah dengan stok terbaru.
+              setPrefilledFor(undefined);
             } catch (e) {
               toast.error((e as Error).message);
             } finally {
@@ -494,7 +536,7 @@ export function AdjustmentsPage({ productId }: { productId?: number }) {
               value={selectedId ?? ""}
               onChange={(e) => {
                 setSelectedId(Number(e.target.value) || undefined);
-                setQuantity("");
+                setActual("");
               }}
             >
               <option value="">Pilih barang</option>
@@ -521,13 +563,13 @@ export function AdjustmentsPage({ productId }: { productId?: number }) {
             )}
             <div className="grid grid-cols-3 bg-slate-50 rounded-lg p-4 mt-4 text-center">
               <div>
-                <p className="text-xs text-slate-500">Stok sistem</p>
+                <p className="text-xs text-slate-500">Stok di web</p>
                 <p className="text-xl font-bold mt-2">
                   {selected?.stock ?? "—"}
                 </p>
               </div>
               <div>
-                <p className="text-xs text-slate-500">Stok baru</p>
+                <p className="text-xs text-slate-500">Jumlah sebenarnya</p>
                 <p className="text-xl font-bold mt-2">{preview?.after ?? "—"}</p>
               </div>
               <div>
@@ -539,50 +581,37 @@ export function AdjustmentsPage({ productId }: { productId?: number }) {
                 </p>
               </div>
             </div>
-            {selected && (
-              <p className="text-xs text-slate-500 mt-2 text-center">
-                Satuan {selected.unit}
-                {decimal ? " · boleh berkoma (maks. 3 angka di belakang koma)" : ""}
-              </p>
-            )}
           </div>
           <div>
-            <fieldset className="mb-5">
-              <legend className={legend}>2. Jenis koreksi</legend>
-              <div className="grid grid-cols-3 gap-2">
-                {correctionModes.map((m) => (
-                  <button
-                    key={m.mode}
-                    type="button"
-                    aria-pressed={mode === m.mode}
-                    onClick={() => setMode(m.mode)}
-                    className={`rounded-lg border p-3 text-left ${mode === m.mode ? "border-emerald-600 bg-emerald-50" : "border-slate-200 bg-white"}`}
-                  >
-                    <span className="block text-sm font-semibold">{m.label}</span>
-                    <span className="block text-[11px] text-slate-500 mt-0.5">
-                      {m.hint}
-                    </span>
-                  </button>
-                ))}
-              </div>
-            </fieldset>
-            <label htmlFor="correction-quantity">{quantityLabels[mode]}</label>
+            <label htmlFor="correction-actual">
+              2. Jumlah sebenarnya di gudang
+              {selected ? ` (${selected.unit})` : ""}
+            </label>
             <Input
-              id="correction-quantity"
+              id="correction-actual"
               type="number"
               min="0"
               max="2147483647"
               step={decimal ? "0.001" : "1"}
               inputMode={decimal ? "decimal" : "numeric"}
               required
-              value={quantity}
-              onChange={(e) => setQuantity(e.target.value)}
+              disabled={!selected}
+              value={actual}
+              onFocus={(e) => e.target.select()}
+              onChange={(e) => setActual(e.target.value)}
+              className="text-lg font-semibold"
             />
-            {result && "error" in result && (
-              <p className="text-sm text-red-600 mt-2">{result.error}</p>
+            {invalid ? (
+              <p className="text-sm text-red-600 mt-2">{invalid}</p>
+            ) : (
+              <p className="text-xs text-slate-500 mt-2">
+                {selected
+                  ? `Ganti angka ini dengan jumlah yang benar-benar ada di gudang. Selisihnya dihitung otomatis.${decimal ? " Boleh berkoma (maks. 3 angka di belakang koma)." : ""}`
+                  : "Pilih barang terlebih dahulu."}
+              </p>
             )}
             <fieldset className="mt-5">
-              <legend className={legend}>4. Alasan (wajib)</legend>
+              <legend className={legend}>3. Alasan (wajib)</legend>
               <div className="flex flex-wrap gap-2 mb-3">
                 {correctionReasons.map((r) => (
                   <button
@@ -603,7 +632,7 @@ export function AdjustmentsPage({ productId }: { productId?: number }) {
             <textarea
               id="correction-detail"
               maxLength={1900}
-              placeholder="mis. 3 pcs pecah saat bongkar muat"
+              placeholder="mis. 2 pcs pecah saat bongkar muat"
               value={detail}
               onChange={(e) => setDetail(e.target.value)}
               className="w-full"
@@ -631,8 +660,15 @@ export function SettingsPage() {
     <>
       <Heading
         title="Pengaturan"
-        description="Konfigurasi server dan panduan singkat perangkat."
+        description="Kategori barang, konfigurasi server, dan panduan aplikasi scanner HP."
       />
+      <section className="mb-9">
+        <h2 className="font-bold text-lg">Kategori barang</h2>
+        <p className="text-xs text-slate-500 mt-1 mb-4">
+          Kelompokkan barang untuk memudahkan pencarian.
+        </p>
+        <CategoryManager />
+      </section>
       <State error={error} loading={loading} />
       <div className="grid lg:grid-cols-2 gap-5">
         <Card>
@@ -646,7 +682,12 @@ export function SettingsPage() {
                 data?.cookie_secure ? "Aktif" : "Nonaktif (HTTP lokal)",
               ],
               ["Database", "MySQL / MariaDB · mysql2"],
-              ["Realtime", "SSE + fallback polling"],
+              [
+                "Update dashboard",
+                livePollSeconds
+                  ? `Cek berkala tiap ${livePollSeconds} detik`
+                  : "Realtime (SSE) + fallback polling",
+              ],
             ].map(([key, value]) => (
               <div key={key}>
                 <dt className="text-xs text-slate-400">{key}</dt>
@@ -655,21 +696,26 @@ export function SettingsPage() {
             ))}
           </dl>
           <p className="text-xs text-slate-400 mt-6">
-            Ubah .env.local di komputer lalu restart aplikasi untuk menerapkan
-            konfigurasi.
+            Diatur lewat environment variables: .env.local di komputer (lalu
+            restart), atau Settings → Environment Variables di Vercel (lalu
+            redeploy).
           </p>
         </Card>
         <Card>
           <h2 className="font-bold mb-4">Aplikasi scanner HP</h2>
           <ol className="list-decimal pl-5 space-y-3 text-sm text-slate-600">
-            <li>Hubungkan HP dan komputer ke Wi-Fi yang sama.</li>
             <li>
               Pasang aplikasi Warehouse Scanner (APK) di HP Android.
             </li>
             <li>
-              Isi alamat server dengan IPv4 komputer (lihat ipconfig), misalnya{" "}
-              <span className="font-mono">https://192.168.1.10:3000</span>,
-              lalu login.
+              Isi alamat server dengan alamat web ini
+              {data?.app_url ? (
+                <>
+                  {" "}
+                  <span className="font-mono">{data.app_url}</span>
+                </>
+              ) : null}
+              , lalu login.
             </li>
             <li>
               Pilih IN atau OUT, scan QR barang, lalu ketik jumlah.

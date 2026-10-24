@@ -1,10 +1,5 @@
-export { Dashboard, PendingPage } from "./dashboard";
+export { Dashboard } from "./dashboard";
 export { ProductsPage, ProductForm, ProductDetail } from "./products";
-export {
-  HistoryPage,
-  AdjustmentsPage,
-  LookupsPage,
-  SettingsPage,
-} from "./management";
+export { HistoryHub, AdjustmentsPage, SettingsPage } from "./management";
 
 export { LocationManager } from "./locations";

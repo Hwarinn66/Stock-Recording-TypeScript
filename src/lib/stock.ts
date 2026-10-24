@@ -41,28 +41,25 @@ export function calculateStock(
     throw new AppError("STOCK_OVERFLOW", "Stok melampaui batas sistem.");
   return after;
 }
-/** Koreksi stok: kurangi (rusak/hilang), tambah (ditemukan), atau isi stok fisik. */
-export type CorrectionMode = "reduce" | "add" | "set";
+/**
+ * Koreksi stok: user mengisi jumlah sebenarnya di gudang, selisih dihitung
+ * otomatis (mis. web 10, gudang 8 → selisih -2). `same` = belum ada perubahan.
+ */
 export function correction(
   stock: number,
-  mode: CorrectionMode,
-  amount: number,
+  actual: number,
   unit: string | null | undefined,
-): { after: number; delta: number } | { error: string } {
-  if (!validAmount(amount, unit) || amount < 0 || (mode !== "set" && amount === 0))
+): { after: number; delta: number } | { error: string; same?: boolean } {
+  if (!validAmount(actual, unit) || actual < 0)
     return {
       error: allowsDecimal(unit)
-        ? "Isi jumlah lebih dari 0 (maks. 3 angka di belakang koma)."
-        : "Isi jumlah bilangan bulat lebih dari 0.",
+        ? "Isi jumlah 0 atau lebih (maks. 3 angka di belakang koma)."
+        : "Isi jumlah bilangan bulat 0 atau lebih.",
     };
-  if (mode === "reduce" && amount > stock)
-    return { error: `Tidak bisa mengurangi lebih dari stok sistem (${stock}).` };
-  const after =
-    mode === "set"
-      ? amount
-      : roundStock(mode === "add" ? stock + amount : stock - amount);
-  if (after > MAX_QUANTITY) return { error: "Stok melampaui batas sistem." };
-  if (after === stock) return { error: "Stok baru sama dengan stok sistem." };
+  if (actual > MAX_QUANTITY) return { error: "Jumlah melampaui batas sistem." };
+  const after = roundStock(actual);
+  if (after === stock)
+    return { error: "Jumlah sama dengan stok di web.", same: true };
   return { after, delta: roundStock(after - stock) };
 }
 export function stockLabel(stock: number) {

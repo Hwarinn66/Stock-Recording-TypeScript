@@ -16,7 +16,7 @@ import type {
   Lookup,
   LocationLookup,
 } from "@/types";
-import { Heading, State, StockBadge, Pager, useData } from "./shared";
+import { Heading, State, StockBadge, Pager, Tabs, useData } from "./shared";
 import { HistoryPage } from "./management";
 type Movement = Product["movement_class"];
 const movementLabel = (m: Movement) =>
@@ -72,12 +72,8 @@ export function ProductsPage({ low = false }: { low?: boolean }) {
   return (
     <>
       <Heading
-        title={low ? "Stock menipis" : "Data barang"}
-        description={
-          low
-            ? "Barang dengan stok 2 atau kurang. Segera periksa kebutuhan pengadaan."
-            : "Kelola barang, lokasi rak, dan label QR Anda."
-        }
+        title="Data barang"
+        description="Kelola barang, lokasi rak, dan label QR. Stok menipis dan stok habis ada di tab di bawah."
       >
         <Button variant="outline" asChild>
           <a href={"/api/products?" + params + "&export=csv"}>
@@ -92,6 +88,18 @@ export function ProductsPage({ low = false }: { low?: boolean }) {
           </Link>
         </Button>
       </Heading>
+      <Tabs
+        items={[
+          ["", "Semua barang"],
+          ["low", "Stok menipis (≤ 2)"],
+          ["zero", "Stok habis"],
+        ].map(([value, label]) => ({
+          key: value || "all",
+          label,
+          active: stock === value,
+          onClick: () => reset(() => setStock(value)),
+        }))}
+      />
       <Card className="mb-5">
         <div className="flex flex-wrap gap-3">
           <Input
