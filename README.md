@@ -160,13 +160,13 @@ Aplikasi HP menyimpan daftar barang (diperbarui otomatis tiap 30 menit saat onli
 
 Setiap hari pukul **01.00 WIB**, server GitHub menyalin seluruh database Aiven (laptop boleh mati), mengompres, lalu **mengenkripsi** salinannya (AES-256) dengan kata sandi Anda. Repo ini publik, sehingga tanpa kata sandi itu file backup tidak bisa dibaca siapa pun. Backup disimpan **30 hari** di tab **Actions → Backup database → (pilih run) → Artifacts**. Sebelum disimpan, workflow memastikan tabel inti ada, dump selesai sampai akhir, dan file terenkripsi bisa dibuka kembali dengan isi identik. Bila gagal, run berwarna merah dan GitHub mengirim email.
 
-**Pasang sekali:** GitHub → repo → **Settings → Secrets and variables → Actions → New repository secret**, buat 7 secret ini:
+**Pasang sekali (1 secret):** `.env.aiven` sudah berisi koneksi Aiven dan baris `BACKUP_PASSPHRASE` (kata sandi backup acak). **Salin baris `BACKUP_PASSPHRASE` itu ke tempat aman lain** (password manager/catatan): tanpa kata sandi ini backup tidak bisa dibuka, dan GitHub tidak bisa menampilkannya lagi.
 
-| Nama secret | Isi |
-| --- | --- |
-| `DB_HOST`, `DB_PORT`, `DB_USER`, `DB_PASSWORD`, `DB_NAME` | sama dengan `.env.aiven` |
-| `DB_SSL_CA` | seluruh isi `certificates/aiven-ca.pem` (termasuk baris `-----BEGIN/END CERTIFICATE-----`) |
-| `BACKUP_PASSPHRASE` | kata sandi backup buatan Anda, minimal 16 karakter. **Simpan di tempat aman**: tanpa kata sandi ini backup tidak bisa dibuka, dan GitHub tidak bisa menampilkannya lagi. |
+1. GitHub → repo → **Settings → Secrets and variables → Actions → New repository secret**.
+2. **Name:** `BACKUP_ENV`
+3. **Secret:** buka `.env.aiven` di VS Code → **Ctrl+A**, **Ctrl+C** → tempel seluruh isinya → **Add secret**.
+
+Sertifikat CA Aiven (publik, bukan rahasia) sudah ada di repo (`.github/aiven-ca.pem`). Secret terpisah (`DB_HOST`, `DB_PORT`, `DB_USER`, `DB_PASSWORD`, `DB_NAME`, `DB_SSL_CA`, `BACKUP_PASSPHRASE`) tetap didukung dan lebih diutamakan. Bila password Aiven diganti, perbarui `.env.aiven` lalu ulangi langkah di atas (secret dengan nama sama akan ditimpa).
 
 Lalu buka **Actions → Backup database → Run workflow** untuk mencoba sekarang.
 

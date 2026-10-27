@@ -2,7 +2,8 @@
 # Salinan lengkap database dikompres lalu DIENKRIPSI (AES-256) dengan kata sandi
 # BACKUP_PASSPHRASE, karena repo ini publik: tanpa kata sandi itu file tidak bisa dibaca.
 # Hasil: tab Actions → "Backup database" → pilih run → Artifacts (disimpan 30 hari).
-# Pulihkan: scripts/decrypt-backup.sh, lihat README bagian "Backup otomatis".
+# Pasang: satu secret BACKUP_ENV = seluruh isi .env.aiven. Pulihkan: scripts/decrypt-backup.sh
+# (lihat README bagian "Backup otomatis").
 name: Backup database
 
 on:
@@ -22,28 +23,24 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     env:
-      DB_HOST: ${{ secrets.DB_HOST }}
-      DB_PORT: ${{ secrets.DB_PORT }}
-      DB_USER: ${{ secrets.DB_USER }}
-      DB_NAME: ${{ secrets.DB_NAME }}
-      MYSQL_PWD: ${{ secrets.DB_PASSWORD }}
-      DB_SSL_CA: ${{ secrets.DB_SSL_CA }}
-      BACKUP_PASSPHRASE: ${{ secrets.BACKUP_PASSPHRASE }}
+      # Cara mudah: satu secret BACKUP_ENV berisi seluruh isi .env.aiven (baris KEY=nilai,
+      # termasuk BACKUP_PASSPHRASE). Secret terpisah dengan nama yang sama tetap didukung
+      # dan lebih diutamakan. Nama S_* agar tidak bentrok dengan nilai akhir di GITHUB_ENV.
+      S_ENV: ${{ secrets.BACKUP_ENV }}
+      S_DB_HOST: ${{ secrets.DB_HOST }}
+      S_DB_PORT: ${{ secrets.DB_PORT }}
+      S_DB_USER: ${{ secrets.DB_USER }}
+      S_DB_PASSWORD: ${{ secrets.DB_PASSWORD }}
+      S_DB_NAME: ${{ secrets.DB_NAME }}
+      S_DB_SSL_CA: ${{ secrets.DB_SSL_CA }}
+      S_BACKUP_PASSPHRASE: ${{ secrets.BACKUP_PASSPHRASE }}
     steps:
-      - name: Periksa secrets
-        run: |
-          missing=""
-          for name in DB_HOST DB_PORT DB_USER DB_NAME MYSQL_PWD DB_SSL_CA BACKUP_PASSPHRASE; do
-            [ -n "${!name}" ] || missing="$missing ${name/MYSQL_PWD/DB_PASSWORD}"
-          done
-          if [ -n "$missing" ]; then
-            echo "::error::Secrets belum diisi:$missing (Settings → Secrets and variables → Actions)."
-            exit 1
-          fi
-          if [ ${#BACKUP_PASSPHRASE} -lt 16 ]; then
-            echo "::error::BACKUP_PASSPHRASE minimal 16 karakter."
-            exit 1
-          fi
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: .github
+
+      - name: Siapkan konfigurasi
+        run: bash .github/backup-config.sh
 
       - name: Pasang mysqldump
         run: |
