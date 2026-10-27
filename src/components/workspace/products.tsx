@@ -340,7 +340,6 @@ export function ProductForm({ id }: { id?: number }) {
   const racks = useData<LocationLookup[]>("racks");
   const locations = useData<LocationLookup[]>("locations");
   const [initial, setInitial] = useState<Product>();
-  const [image, setImage] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   // Koreksi stok di halaman edit memakai data stok terbaru (ikut update otomatis).
@@ -349,10 +348,7 @@ export function ProductForm({ id }: { id?: number }) {
   useEffect(() => {
     if (id)
       api<Product>("products/" + id)
-        .then((p) => {
-          setInitial(p);
-          setImage(p.image);
-        })
+        .then(setInitial)
         .catch((e) => setError(e.message));
   }, [id]);
   return (
@@ -399,7 +395,6 @@ export function ProductForm({ id }: { id?: number }) {
               rack_id: Number(f.get("rack_id")),
               position_number: Number(f.get("position_number")),
               description: String(f.get("description")),
-              image,
               ...(!id ? { sku: String(f.get("sku")) } : {}),
             };
             if (
@@ -528,43 +523,6 @@ export function ProductForm({ id }: { id?: number }) {
                 initialId={initial?.location_id}
                 productId={id}
               />
-              <div>
-                <label htmlFor="image">Foto (opsional, maks. 1 MB)</label>
-                <Input
-                  id="image"
-                  type="file"
-                  accept="image/png,image/jpeg,image/webp"
-                  onChange={(e) => {
-                    const file = e.target.files?.[0];
-                    if (!file) return;
-                    if (file.size > 1000000) {
-                      toast.error("Ukuran maksimal 1 MB");
-                      e.target.value = "";
-                      return;
-                    }
-                    const reader = new FileReader();
-                    reader.onload = () => setImage(String(reader.result));
-                    reader.readAsDataURL(file);
-                  }}
-                />
-                {image && (
-                  <div className="mt-2 flex items-center gap-3">
-                    <img
-                      src={image}
-                      alt="Foto barang"
-                      className="size-16 object-cover rounded"
-                    />
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      size="sm"
-                      onClick={() => setImage(null)}
-                    >
-                      Hapus foto
-                    </Button>
-                  </div>
-                )}
-              </div>
               <div className="sm:col-span-2">
                 <label htmlFor="description">Deskripsi</label>
                 <textarea
@@ -724,13 +682,6 @@ export function ProductDetail({
         {!qrOnly && (
           <Card className="no-print">
             <h2 className="font-semibold mb-5">Informasi persediaan</h2>
-            {p.image && (
-              <img
-                src={p.image}
-                alt={p.name}
-                className="w-24 h-24 object-cover rounded-lg mb-4"
-              />
-            )}
             <div className="text-4xl font-bold mb-3">
               {p.stock} <span className="text-sm text-slate-400">{p.unit}</span>
             </div>

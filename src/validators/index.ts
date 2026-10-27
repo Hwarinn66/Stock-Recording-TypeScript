@@ -1,7 +1,8 @@
 import { z } from "zod";
 import { roundStock } from "@/lib/stock";
 export const idSchema = z.coerce.number().int().positive().max(2147483647);
-const threeDecimals = (value: number) => Math.abs(value - roundStock(value)) < 1e-9;
+const threeDecimals = (value: number) =>
+  Math.abs(value - roundStock(value)) < 1e-9;
 // Maks. 3 desimal; aturan bulat untuk satuan selain Kg dicek di service (butuh satuan barang).
 export const quantitySchema = z
   .number()
@@ -42,9 +43,23 @@ export const recordSchema = z
     client_ref: z.string().uuid().optional(),
     // Antrean offline HP: waktu barang benar-benar masuk/keluar (bukan waktu terkirim).
     recorded_at: z.iso.datetime().optional(),
+    // Kode Masuk barang IN (111.22.33 / ATK.111.22.33); format dicek di service (butuh kategori).
+    in_code: z.string().trim().toUpperCase().max(20).optional(),
   })
   .strict()
   .superRefine((value, ctx) => {
+    if (value.mode === "IN" && !value.in_code)
+      ctx.addIssue({
+        code: "custom",
+        path: ["in_code"],
+        message: "Kode masuk wajib untuk barang masuk (contoh 111.22.33).",
+      });
+    if (value.mode === "OUT" && value.in_code)
+      ctx.addIssue({
+        code: "custom",
+        path: ["in_code"],
+        message: "Kode masuk hanya untuk barang masuk.",
+      });
     if (value.mode === "OUT" && !value.reservation_number)
       ctx.addIssue({
         code: "custom",
@@ -70,18 +85,13 @@ const productBaseSchema = z
     rack_id: idSchema.optional(),
     position_number: z.coerce.number().int().min(1).max(999999).optional(),
     description: z.string().max(5000).nullable().optional(),
-    image: z
-      .string()
-      .max(1500000)
-      .regex(/^data:image\/(png|jpeg|webp);base64,[A-Za-z0-9+/=]+$/)
-      .nullable()
-      .optional(),
     active: z.boolean().optional(),
   })
   .strict();
 
 export const productSchema = productBaseSchema.superRefine((value, ctx) => {
-  const direct = value.rack_id !== undefined || value.position_number !== undefined;
+  const direct =
+    value.rack_id !== undefined || value.position_number !== undefined;
   if (
     value.location_id === undefined &&
     !(value.rack_id !== undefined && value.position_number !== undefined)

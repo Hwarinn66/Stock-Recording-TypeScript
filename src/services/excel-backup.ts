@@ -176,6 +176,7 @@ export const historyColumns: Column<StockTransaction>[] = [
     kind: "code",
     value: (t) => t.reservation_number,
   },
+  { header: "Kode Masuk", width: 15, kind: "code", value: (t) => t.in_code },
   { header: "Petugas", width: 14, kind: "text", value: (t) => t.actor_name },
   { header: "Catatan", width: 50, kind: "text", value: (t) => t.notes },
 ];

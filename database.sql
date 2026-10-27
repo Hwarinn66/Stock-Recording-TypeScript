@@ -63,7 +63,7 @@ CREATE TABLE products (
  movement_class ENUM('FAST','SLOW','DEAD') NULL DEFAULT NULL,
  -- DECIMAL: barang satuan Kg boleh berkoma; satuan lain dijaga bilangan bulat oleh aplikasi.
  stock DECIMAL(15,3) NOT NULL DEFAULT 0, location_id INT UNSIGNED NOT NULL,
- qr_token CHAR(36) NOT NULL UNIQUE, image MEDIUMTEXT, description TEXT,
+ qr_token CHAR(36) NOT NULL UNIQUE, description TEXT,
  active BOOLEAN NOT NULL DEFAULT 1,
  active_location_id INT UNSIGNED GENERATED ALWAYS AS (CASE WHEN active=1 THEN location_id ELSE NULL END) STORED,
  created_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
@@ -85,6 +85,8 @@ CREATE TABLE stock_transactions (
  status ENUM('PENDING','APPROVED','CANCELLED') NOT NULL DEFAULT 'PENDING', notes TEXT,
  -- Nomor reservasi 7 angka: identitas pengambilan & divisi untuk barang keluar.
  reservation_number CHAR(7) NULL,
+ -- Kode Masuk barang IN dari HP: 111.22.33 (barang ATK: ATK.111.22.33).
+ in_code VARCHAR(20) NULL,
  -- Kunci pengiriman unik (UUID aplikasi HP / baris buku darurat): kirim ulang tidak tercatat dua kali.
  client_ref VARCHAR(64) NULL,
  actor_id INT UNSIGNED NOT NULL,

@@ -6,17 +6,19 @@ import 'package:mobile_scanner/mobile_scanner.dart';
 
 import '../api.dart';
 import '../ui.dart';
+import 'product_info_screen.dart';
 import 'quantity_screen.dart';
 
 /// Langkah 2: scan QR barang. Kamera dimatikan selama barang dicek dan
 /// selama layar lain (jumlah, reservasi, hasil) menutupinya, lalu menyala
 /// lagi saat layar ini terlihat kembali.
 class ScanScreen extends StatefulWidget {
+  /// [mode] null = Cek Barang: scan hanya untuk melihat detail barang.
   const ScanScreen({super.key, required this.api, required this.mode});
 
   static const routeName = '/scan';
   final ApiClient api;
-  final Mode mode;
+  final Mode? mode;
 
   @override
   State<ScanScreen> createState() => _ScanScreenState();
@@ -119,8 +121,10 @@ class _ScanScreenState extends State<ScanScreen>
     });
     unawaited(HapticFeedback.mediumImpact());
     await _stop();
+    final mode = widget.mode;
+    if (mode == null) return _openInfo(token);
     try {
-      final product = await widget.api.lookup(token, widget.mode);
+      final product = await widget.api.lookup(token, mode);
       if (!mounted) return;
       _openQuantity(token, product);
     } on ApiException catch (error) {
@@ -146,6 +150,35 @@ class _ScanScreenState extends State<ScanScreen>
     }
   }
 
+  /// Cek Barang: tampilkan detail; saat server tidak terjangkau pakai data di HP.
+  Future<void> _openInfo(String token) async {
+    void open(ProductInfoScreen screen) => unawaited(
+      Navigator.of(context).push(MaterialPageRoute<void>(builder: (_) => screen)),
+    );
+    try {
+      final info = await widget.api.productInfo(token);
+      if (!mounted) return;
+      open(ProductInfoScreen(info: info));
+    } on ApiException catch (error) {
+      if (!mounted) return;
+      if (error.unauthorized) {
+        goToLogin(context, widget.api, 'Sesi berakhir. Silakan login lagi.');
+        return;
+      }
+      final cached = error.unavailable ? widget.api.store.offline.product(token) : null;
+      if (cached != null) {
+        open(ProductInfoScreen.offline(product: cached));
+        return;
+      }
+      unawaited(HapticFeedback.heavyImpact());
+      setState(
+        () => _error = error.unavailable
+            ? 'Server tidak terjangkau dan barang ini belum tersimpan di HP.'
+            : _friendly(error),
+      );
+    }
+  }
+
   void _openQuantity(String token, Product product, {bool offline = false}) {
     // Kamera menyala lagi lewat didPopNext saat layar ini terlihat kembali.
     unawaited(
@@ -153,7 +186,7 @@ class _ScanScreenState extends State<ScanScreen>
         MaterialPageRoute<void>(
           builder: (_) => QuantityScreen(
             api: widget.api,
-            mode: widget.mode,
+            mode: widget.mode!,
             token: token,
             product: product,
             offline: offline,
@@ -178,13 +211,14 @@ class _ScanScreenState extends State<ScanScreen>
 
   @override
   Widget build(BuildContext context) {
-    final color = modeColor(widget.mode);
+    final mode = widget.mode;
+    final color = mode == null ? infoColor : modeColor(mode);
     return Scaffold(
       backgroundColor: Colors.black,
       appBar: AppBar(
         backgroundColor: color,
         foregroundColor: Colors.white,
-        title: Text('${widget.mode.code} · ${widget.mode.label}'),
+        title: Text(mode == null ? 'Cek Barang' : '${mode.code} · ${mode.label}'),
         actions: [
           ValueListenableBuilder(
             valueListenable: _controller,
@@ -260,7 +294,9 @@ class _ScanScreenState extends State<ScanScreen>
       );
     }
     return Text(
-      widget.mode == Mode.inbound
+      widget.mode == null
+          ? 'Arahkan kamera ke label QR untuk melihat detail barang.'
+          : widget.mode == Mode.inbound
           ? 'Arahkan kamera ke label QR barang yang masuk.'
           : 'Arahkan kamera ke label QR barang yang akan diambil.',
       textAlign: TextAlign.center,

@@ -8,7 +8,7 @@ Untuk menjalankan secara online gratis (Vercel + database Aiven), ikuti [DEPLOY-
 
 Tambah barang → stok awal 0 + UUID QR otomatis → cetak label → buka aplikasi **Warehouse Scanner** di HP → pilih IN/OUT → scan QR → ketik jumlah (keyboard angka) → khusus OUT: ketik **no reservasi 7 angka** → Selesai → SQL transaction langsung memperbarui stok dan histori → dashboard menerima SSE. No reservasi adalah identitas pengambilan dan divisi pengambil; daftarnya tampil di dashboard dan menu **Riwayat → No reservasi**.
 
-Fitur: dashboard 7 indikator, master barang/kategori/ruangan/blok/rak/posisi, foto opsional tersimpan di MySQL, detail dan histori barang, regenerasi QR, label cetak, antrean multi-barang, adjustment stock opname dengan alasan, filter/search/sorting/pagination, CSV, soft disable barang, login server session, feedback suara/vibrasi HP. Semua data operasional berasal dari MySQL; browser tidak mengakses database.
+Fitur: dashboard 7 indikator, master barang/kategori/ruangan/blok/rak/posisi, detail dan histori barang, regenerasi QR, label cetak, antrean multi-barang, adjustment stock opname dengan alasan, filter/search/sorting/pagination, CSV, soft disable barang, login server session, feedback suara/vibrasi HP. Semua data operasional berasal dari MySQL; browser tidak mengakses database.
 
 ## Lokasi bertingkat (v2)
 
@@ -149,6 +149,13 @@ Setelah web normal: **Pengaturan → Unggah buku darurat** → periksa pratinjau
 
 Aplikasi HP menyimpan daftar barang (diperbarui otomatis tiap 30 menit saat online). Bila server tidak terjangkau, QR tetap dikenali dari daftar itu dan transaksi disimpan di HP ("Tersimpan di HP"), lalu dikirim otomatis saat server bisa dihubungi lagi, lengkap dengan **waktu kejadian aslinya**. Menu utama HP menampilkan jumlah antrean dan transaksi yang ditolak server (mis. stok ternyata tidak cukup) untuk dicek, dikirim ulang, atau dihapus. Setiap transaksi HP membawa kunci unik (`client_ref`), sehingga sinyal yang putus setelah server menyimpan, atau antrean yang terkirim dua kali, tidak pernah mencatat transaksi ganda. Antrean menerima waktu kejadian maksimal 7 hari ke belakang.
 
+## Kode Masuk (barang IN) dan Cek Barang (aplikasi HP 1.2.0)
+
+- **Kode Masuk:** setiap barang masuk dari aplikasi HP wajib kode berformat `111.22.33` (3 angka . 2 angka . 2 angka). Barang kategori **ATK** wajib `ATK.111.22.33`. Format dicek di server berdasarkan kategori barang (`INVALID_IN_CODE` bila salah). Kode tersimpan di `stock_transactions.in_code`, tampil di Riwayat (tab Masuk & Semua), bisa dicari, ikut CSV dan Excel (kolom *Kode Masuk*). Barang keluar tidak berubah.
+- **Cek Barang:** halaman baru di aplikasi HP untuk melihat detail barang hasil scan (`GET /api/product-info/:qr_token`), tidak mengubah stok.
+- **Foto barang dihapus** dari web dan aplikasi HP. **`migrations/011_drop_product_image.sql`** membuang kolom `products.image`; jalankan **setelah** source baru aktif (source lama masih memakai kolom itu).
+- Butuh **`migrations/010_in_code.sql`** sekali. Setelah server baru aktif, transaksi IN dari aplikasi lama (tanpa kode) ditolak, jadi pasang APK 1.2.0 di semua HP bersamaan dengan deploy. Barang masuk lewat buku darurat Excel tidak memakai kode masuk.
+
 ## Persyaratan
 
 - Windows 10/11, Laragon dan MySQL **8.0.16+** atau MariaDB **10.6+**, engine InnoDB. Versi ini diperlukan untuk generated columns dan CHECK constraints.
@@ -251,7 +258,7 @@ Lihat [Next.js CLI — HTTPS](https://nextjs.org/docs/app/api-reference/cli/next
 
 ## Penggunaan
 
-- **Tambah Barang**: Kode Barang unik, nama, kategori, satuan, ruangan, blok, rak, dan nomor penempatan wajib. Nomor penempatan diketik langsung; posisi dibuat otomatis bila belum ada dan ditolak jika sudah ditempati barang aktif. Tidak ada input stok. Foto PNG/JPEG/WebP maksimum 1 MB, disimpan di MySQL; SVG tidak diterima.
+- **Tambah Barang**: Kode Barang unik, nama, kategori, satuan, ruangan, blok, rak, dan nomor penempatan wajib. Nomor penempatan diketik langsung; posisi dibuat otomatis bila belum ada dan ditolak jika sudah ditempati barang aktif. Tidak ada input stok. Barang tidak memakai foto.
 - **QR Barang**: download SVG, Print QR dengan nama/SKU/lokasi lengkap dan ruangan. QR hanya memuat UUID, bukan SKU atau nomor rak. Regenerate membatalkan token lama; cetak dan ganti label setelahnya.
 - **Aplikasi scanner HP**: pilih IN/OUT → scan QR → backend memeriksa barang (aktif, tidak pending, OUT tidak stok 0) → ketik jumlah (keyboard angka, huruf ditolak; OUT tidak boleh melebihi stok) → OUT: no reservasi tepat 7 angka → Selesai. Transaksi tersimpan **APPROVED** dan stok langsung berubah, tanpa approval komputer. Kamera mati selama layar jumlah/reservasi/hasil terbuka; **Scan berikutnya** menyalakannya lagi.
 - **No Reservasi**: tab di menu **Riwayat** dan tabel "No reservasi terbaru" di dashboard: no reservasi, waktu, kode/nama barang, qty, lokasi, petugas (akun yang scan), nomor transaksi. Pencarian riwayat menerima no reservasi; CSV `riwayat-reservations` menaruh no reservasi di kolom pertama.
@@ -290,7 +297,8 @@ Semua API berbasis JSON kecuali QR SVG, CSV dan SSE. Autentikasi menggunakan ses
 | POST         | `/api/auth/logout`                                                | logout session                                     |
 | GET          | `/api/auth/me`                                                    | user aktif                                         |
 | GET          | `/api/scan/:qr_token?mode=IN\|OUT`                                | cek barang hasil scan (aplikasi HP)                |
-| POST         | `/api/transactions`                                               | `{qr_token,mode,quantity,reservation_number?,client_ref?,recorded_at?}`; OUT wajib no reservasi 7 angka; stok langsung berubah. `client_ref` (UUID) sama = dijawab dengan transaksi yang sudah ada (`replayed:true`); `recorded_at` (ISO, maks. 7 hari lalu) untuk antrean offline |
+| POST         | `/api/transactions`                                               | `{qr_token,mode,quantity,reservation_number?,in_code?,client_ref?,recorded_at?}`; OUT wajib no reservasi 7 angka, IN wajib kode masuk `111.22.33` (ATK: `ATK.111.22.33`); stok langsung berubah. `client_ref` (UUID) sama = dijawab dengan transaksi yang sudah ada (`replayed:true`); `recorded_at` (ISO, maks. 7 hari lalu) untuk antrean offline |
+| GET          | `/api/product-info/:qr_token`                                     | detail barang untuk halaman Cek Barang (HP)        |
 | GET          | `/api/catalog`                                                    | barang aktif + `qr_token` untuk disimpan di HP (scan offline) |
 | GET          | `/api/backup/excel`                                               | unduh cadangan Excel (stok + riwayat 90 hari)      |
 | GET          | `/api/excel-live`, `/api/excel-live/status`; POST `/api/excel-live/revoke` | unduh Excel live (kunci baru) / jumlah file aktif / cabut semua kunci |
@@ -400,7 +408,6 @@ Periksa juga izin kamera ditolak, sertifikat HTTPS, senter, getaran, print label
 | Realtime putus                        | Periksa jaringan/session; SSE reconnect otomatis dan polling 5s. Reverse proxy harus menonaktifkan buffering `/api/events` dan memberi timeout panjang. |
 | STALE_STOCK                           | Pilih ulang barang agar stok sistem terbaru ditampilkan, periksa fisik, approve lagi.                                                                   |
 | BUSY / deadlock                       | Transaksi rollback aman. Ulangi tindakan setelah proses lain selesai.                                                                                   |
-| Foto ditolak                          | PNG/JPEG/WebP max 1 MB; perkecil gambar.                                                                                                                |
 | Beep/vibrasi tidak terdengar          | Pilih mode lewat tap; cek silent mode. Vibration API tidak didukung semua browser.                                                                      |
 
 ## Rujukan

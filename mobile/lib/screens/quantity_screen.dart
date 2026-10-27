@@ -5,6 +5,7 @@ import '../api.dart';
 import '../offline.dart';
 import '../ui.dart';
 import '../validators.dart';
+import 'in_code_screen.dart';
 import 'reservation_screen.dart';
 import 'result_screen.dart';
 
@@ -76,17 +77,27 @@ class _QuantityScreenState extends State<QuantityScreen> {
       _quantity.text,
       decimal: allowsDecimal(widget.product.unit),
     )!;
-    if (widget.mode.needsReservation) {
+    if (widget.mode.needsReservation || widget.mode.needsInCode) {
+      // OUT → no reservasi; IN → kode masuk.
       await Navigator.of(context).push(
         MaterialPageRoute<void>(
-          builder: (_) => ReservationScreen(
-            api: widget.api,
-            mode: widget.mode,
-            token: widget.token,
-            product: widget.product,
-            quantity: quantity,
-            offline: widget.offline,
-          ),
+          builder: (_) => widget.mode.needsReservation
+              ? ReservationScreen(
+                  api: widget.api,
+                  mode: widget.mode,
+                  token: widget.token,
+                  product: widget.product,
+                  quantity: quantity,
+                  offline: widget.offline,
+                )
+              : InCodeScreen(
+                  api: widget.api,
+                  mode: widget.mode,
+                  token: widget.token,
+                  product: widget.product,
+                  quantity: quantity,
+                  offline: widget.offline,
+                ),
         ),
       );
       return;
@@ -209,7 +220,11 @@ class _QuantityScreenState extends State<QuantityScreen> {
                           dimension: 22,
                           child: CircularProgressIndicator(strokeWidth: 2.5, color: Colors.white),
                         )
-                      : Text(widget.mode.needsReservation ? 'LANJUT' : 'SELESAI'),
+                      : Text(
+                          widget.mode.needsReservation || widget.mode.needsInCode
+                              ? 'LANJUT'
+                              : 'SELESAI',
+                        ),
                 ),
               ),
             ],

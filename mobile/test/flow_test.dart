@@ -69,6 +69,7 @@ Future<(ApiClient, List<Map<String, dynamic>>)> fakeApi({
             'stock_before': before,
             'stock_after': (after * 1000).round() / 1000,
             'reservation_number': body['reservation_number'],
+            'in_code': body['in_code'],
             'product': productJson(subject),
           },
         }),
@@ -172,22 +173,68 @@ void main() {
     expect(find.text('kamera scan'), findsOneWidget);
   });
 
-  testWidgets('IN: tanpa no reservasi, langsung selesai', (tester) async {
+  testWidgets('IN: jumlah lalu kode masuk 111.22.33 (titik otomatis), tanpa no reservasi', (tester) async {
     final (api, sent) = await fakeApi();
     await openQuantity(tester, api, Mode.inbound);
-    expect(find.text('LANJUT'), findsNothing);
     await tester.enterText(find.byKey(const Key('quantity')), '0');
-    await tester.tap(find.text('SELESAI'));
+    await tester.tap(find.text('LANJUT'));
     await tester.pumpAndSettle();
     expect(find.text('Isi jumlah lebih dari 0.'), findsOneWidget);
 
     await tester.enterText(find.byKey(const Key('quantity')), '3');
+    await tester.tap(find.text('LANJUT'));
+    await tester.pumpAndSettle();
+    expect(find.text('Kode Masuk'), findsOneWidget);
+    expect(find.text('Jumlah masuk: 3 PCS'), findsOneWidget);
+    expect(find.text('ATK.'), findsNothing, reason: 'bukan barang ATK');
+
+    // Angka saja, titik terisi otomatis, maksimal 7 angka.
+    await tester.enterText(find.byKey(const Key('in-code')), '1112233');
+    expect(text(tester, 'in-code'), '111.22.33');
+    await tester.enterText(find.byKey(const Key('in-code')), '11a12');
+    expect(text(tester, 'in-code'), '111.2');
     await tester.tap(find.text('SELESAI'));
     await tester.pumpAndSettle();
+    expect(find.text('Kode masuk harus 7 angka, mis. 111.22.33.'), findsOneWidget);
+    expect(sent, isEmpty);
+
+    await tester.enterText(find.byKey(const Key('in-code')), '111223399');
+    expect(text(tester, 'in-code'), '111.22.33');
+    await tester.tap(find.text('SELESAI'));
+    await tester.pumpAndSettle();
+    expect(sent.single['in_code'], '111.22.33');
     expect(sent.single.containsKey('reservation_number'), isFalse);
     expect(find.text('+3 PCS'), findsOneWidget);
     expect(find.text('99 → 102 PCS'), findsOneWidget);
+    expect(find.text('Kode masuk'), findsOneWidget);
+    expect(find.text('111.22.33'), findsOneWidget);
     expect(find.text('No reservasi'), findsNothing);
+  });
+
+  testWidgets('IN barang ATK: ATK. sudah tertulis, terkirim ATK.111.22.33', (tester) async {
+    final atk = Product(
+      id: 5,
+      sku: 'SM0A00002',
+      name: 'BALLPOINT;BALLINER;BLUE/BLACK',
+      unit: 'Bh',
+      stock: 18,
+      locationCode: 'B.09.03.032',
+      roomName: 'Ruangan 1',
+      categoryName: 'ATK',
+    );
+    final (api, sent) = await fakeApi(item: atk);
+    await openQuantity(tester, api, Mode.inbound, item: atk);
+    await tester.enterText(find.byKey(const Key('quantity')), '2');
+    await tester.tap(find.text('LANJUT'));
+    await tester.pumpAndSettle();
+    expect(find.text('Masukkan kode masuk (barang ATK)'), findsOneWidget);
+    expect(find.text('ATK.'), findsOneWidget);
+    await tester.enterText(find.byKey(const Key('in-code')), '1234567');
+    expect(text(tester, 'in-code'), '123.45.67');
+    await tester.tap(find.text('SELESAI'));
+    await tester.pumpAndSettle();
+    expect(sent.single['in_code'], 'ATK.123.45.67');
+    expect(find.text('ATK.123.45.67'), findsOneWidget);
   });
 
   testWidgets('Kg: keyboard desimal, koma diterima tanpa pembulatan', (tester) async {
@@ -226,7 +273,7 @@ void main() {
     expect(text(tester, 'quantity'), '25', reason: 'koma dibuang untuk satuan bukan Kg');
   });
 
-  testWidgets('penolakan server tampil dan user tetap di layar jumlah', (tester) async {
+  testWidgets('penolakan server tampil dan user tetap di layar terakhir', (tester) async {
     final (api, sent) = await fakeApi(
       respond: (_) => http.Response(
         jsonEncode({
@@ -239,11 +286,14 @@ void main() {
     );
     await openQuantity(tester, api, Mode.inbound);
     await tester.enterText(find.byKey(const Key('quantity')), '3');
+    await tester.tap(find.text('LANJUT'));
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byKey(const Key('in-code')), '1112233');
     await tester.tap(find.text('SELESAI'));
     await tester.pumpAndSettle();
     expect(sent, hasLength(1));
     expect(find.text('Stok tidak mencukupi. Stok tersedia: 2. Quantity keluar: 3.'), findsOneWidget);
-    expect(find.byKey(const Key('quantity')), findsOneWidget);
+    expect(find.byKey(const Key('in-code')), findsOneWidget);
   });
 
   test('formatter angka juga menolak paste dari keyboard fisik', () {

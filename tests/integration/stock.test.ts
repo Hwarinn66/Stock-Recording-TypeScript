@@ -386,7 +386,7 @@ test("mobile scanner: direct stock change with reservation number", async (t) =>
     assert.equal("image" in found, false);
   });
   await t.test("IN changes stock immediately, no reservation", async () => {
-    const r = await record({ qr_token: token, mode: "IN", quantity: 5 }, user);
+    const r = await record({ qr_token: token, mode: "IN", in_code: "111.22.33", quantity: 5 }, user);
     assert.equal(r.stock_before, 8);
     assert.equal(r.stock_after, 13);
     assert.equal((await p()).stock, 13);
@@ -465,14 +465,14 @@ test("mobile scanner: direct stock change with reservation number", async (t) =>
     const pending = await scan(token, "IN", user);
     await assert.rejects(lookup(token, "IN"), { code: "PRODUCT_PENDING" });
     await assert.rejects(
-      record({ qr_token: token, mode: "IN", quantity: 1 }, user),
+      record({ qr_token: token, mode: "IN", in_code: "111.22.33", quantity: 1 }, user),
       { code: "PRODUCT_PENDING" },
     );
     await cancel(pending.id);
     await editProduct(product, { active: false });
     await assert.rejects(lookup(token, "IN"), { code: "PRODUCT_INACTIVE" });
     await assert.rejects(
-      record({ qr_token: token, mode: "IN", quantity: 1 }, user),
+      record({ qr_token: token, mode: "IN", in_code: "111.22.33", quantity: 1 }, user),
       { code: "PRODUCT_INACTIVE" },
     );
   });
@@ -568,7 +568,7 @@ test("CSV import: ERP location, movement label and exact Kg decimals", async (t)
     await adjustment({ product_id: kg.id, expected_stock: 548.5, physical_stock: 548.25, notes: "timbang ulang" }, user);
     assert.equal((await placed("IMP-KG")).stock, 548.25);
     const slot = await placed("SLOT-2");
-    await assert.rejects(record({ qr_token: slot.qr_token, mode: "IN", quantity: 1.5 }, user), {
+    await assert.rejects(record({ qr_token: slot.qr_token, mode: "IN", in_code: "111.22.33", quantity: 1.5 }, user), {
       code: "INVALID_QUANTITY",
     });
     await assert.rejects(
@@ -594,7 +594,7 @@ test("history revision: fix quantity or reservation of a saved IN/OUT", async (t
     { product_id: product, expected_stock: current, physical_stock: 10, notes: "awal tes revisi" },
     user,
   );
-  const inbound = await record({ qr_token: token, mode: "IN", quantity: 5 }, user);
+  const inbound = await record({ qr_token: token, mode: "IN", in_code: "111.22.33", quantity: 5 }, user);
   const outbound = await record(
     { qr_token: token, mode: "OUT", quantity: 4, reservation_number: "1234567" },
     user,
@@ -682,8 +682,8 @@ test("HP: kiriman ulang dengan client_ref sama tidak dicatat dua kali", async (t
     (await rows<{ n: number }>("SELECT COUNT(*) n FROM stock_transactions WHERE client_ref=?", [ref]))[0].n;
   await t.test("kirim ulang berurutan dijawab dengan transaksi yang sama", async () => {
     const ref = randomUUID();
-    const first = await record({ qr_token, mode: "IN", quantity: 10, client_ref: ref }, user);
-    const again = await record({ qr_token, mode: "IN", quantity: 10, client_ref: ref }, user);
+    const first = await record({ qr_token, mode: "IN", in_code: "111.22.33", quantity: 10, client_ref: ref }, user);
+    const again = await record({ qr_token, mode: "IN", in_code: "111.22.33", quantity: 10, client_ref: ref }, user);
     assert.equal(first.replayed, false);
     assert.equal(again.replayed, true);
     assert.equal(again.id, first.id);
@@ -719,7 +719,7 @@ test("HP: kiriman ulang dengan client_ref sama tidak dicatat dua kali", async (t
   await t.test("antrean offline memakai waktu kejadian, bukan waktu terkirim", async () => {
     const at = new Date(Date.now() - 26 * 3600000);
     const r = await record(
-      { qr_token, mode: "IN", quantity: 2, client_ref: randomUUID(), recorded_at: at.toISOString() },
+      { qr_token, mode: "IN", in_code: "111.22.33", quantity: 2, client_ref: randomUUID(), recorded_at: at.toISOString() },
       user,
     );
     const [tx] = await rows<{ scanned_at: string; approved_at: string; notes: string }>(
@@ -735,10 +735,67 @@ test("HP: kiriman ulang dengan client_ref sama tidak dicatat dua kali", async (t
   await t.test("waktu HP tidak wajar ditolak", async () => {
     for (const at of [new Date(Date.now() - 8 * 86400000), new Date(Date.now() + 3600000)])
       await assert.rejects(
-        record({ qr_token, mode: "IN", quantity: 1, client_ref: randomUUID(), recorded_at: at.toISOString() }, user),
+        record({ qr_token, mode: "IN", in_code: "111.22.33", quantity: 1, client_ref: randomUUID(), recorded_at: at.toISOString() }, user),
         { code: "INVALID_TIME" },
       );
     assert.equal(await stockOf(), 2);
+  });
+});
+
+test("kode masuk barang IN (ATK diawali ATK.) & halaman Cek Barang", async (t) => {
+  const { productInfo } = await import("../../src/services/transactions");
+  await execute("INSERT IGNORE INTO categories(name) VALUES ('ATK')");
+  const [{ id: atkCategory }] = await rows<{ id: number }>(
+    "SELECT id FROM categories WHERE name='ATK'",
+  );
+  const make = async (sku: string, categoryId: number, position: number) => {
+    const id = (
+      await createProduct({ sku, name: `Barang ${sku}`, unit: "PCS", category_id: categoryId, rack_id: rack, position_number: position })
+    ).id;
+    return (await rows<{ qr_token: string }>("SELECT qr_token FROM products WHERE id=?", [id]))[0].qr_token;
+  };
+  const biasa = await make("KM-BIASA", category, 81);
+  const atk = await make("KM-ATK", atkCategory, 82);
+  await t.test("barang biasa: 111.22.33 tersimpan, format lain ditolak", async () => {
+    for (const in_code of ["ATK.111.22.33", "11.22.33", "111.22.3"])
+      await assert.rejects(record({ qr_token: biasa, mode: "IN", quantity: 1, in_code }, user), {
+        code: "INVALID_IN_CODE",
+        message: /111\.22\.33/,
+      });
+    const r = await record({ qr_token: biasa, mode: "IN", quantity: 4, in_code: "111.22.33" }, user);
+    assert.equal(r.in_code, "111.22.33");
+    assert.equal(r.product.category_name, "Testing");
+    const [tx] = await rows<{ in_code: string }>("SELECT in_code FROM stock_transactions WHERE id=?", [r.id]);
+    assert.equal(tx.in_code, "111.22.33");
+  });
+  await t.test("barang ATK: wajib ATK.111.22.33", async () => {
+    await assert.rejects(record({ qr_token: atk, mode: "IN", quantity: 1, in_code: "111.22.33" }, user), {
+      code: "INVALID_IN_CODE",
+      message: /ATK\.111\.22\.33/,
+    });
+    const r = await record({ qr_token: atk, mode: "IN", quantity: 2, in_code: "ATK.123.45.67" }, user);
+    assert.equal(r.in_code, "ATK.123.45.67");
+  });
+  await t.test("barang keluar tetap tanpa kode masuk", async () => {
+    const r = await record({ qr_token: biasa, mode: "OUT", quantity: 1, reservation_number: "0012345" }, user);
+    assert.equal(r.in_code, null);
+  });
+  await t.test("riwayat bisa dicari dengan kode masuk", async () => {
+    const found = await history("IN", listSchema.parse({ q: "ATK.123.45.67" }));
+    assert.equal(found.items[0].in_code, "ATK.123.45.67");
+  });
+  await t.test("Cek Barang: detail, total 30 hari, riwayat terbaru", async () => {
+    const info = await productInfo(biasa);
+    assert.equal(info.product.sku, "KM-BIASA");
+    assert.equal(info.product.category_name, "Testing");
+    assert.equal(info.product.stock, 3);
+    assert.equal(info.product.location_code, "T.01.81");
+    assert.equal(info.in_30, 4);
+    assert.equal(info.out_30, 1);
+    assert.equal(info.pending, null);
+    assert.deepEqual(info.history.map((h) => h.transaction_type), ["OUT", "IN"]);
+    assert.equal(info.history[1].in_code, "111.22.33");
+    await assert.rejects(productInfo("550e8400-e29b-41d4-a716-446655440999"), { code: "QR_NOT_FOUND" });
   });
 });
 
@@ -773,7 +830,7 @@ test("Excel live dari web: kunci baca-saja, isi file, cabut akses", async () => 
   assert.equal((connections.match(/refreshOnLoad="1"/g) ?? []).length, 3);
   const workbook = await zip.file("xl/workbook.xml")!.async("string");
   assert.match(workbook, /<definedName name="Stok" localSheetId="0">'Stok Barang'!\$A\$5:\$K\$\d+<\/definedName>/);
-  assert.match(workbook, /<definedName name="Riwayat" localSheetId="1">'Riwayat Transaksi'!\$A\$4:\$P\$\d+<\/definedName>/);
+  assert.match(workbook, /<definedName name="Riwayat" localSheetId="1">'Riwayat Transaksi'!\$A\$4:\$Q\$\d+<\/definedName>/);
   assert.ok(zip.file("xl/queryTables/queryTable3.xml"));
   assert.match(await zip.file("[Content_Types].xml")!.async("string"), /queryTable3\.xml/);
   assert.match(await zip.file("xl/worksheets/_rels/sheet2.xml.rels")!.async("string"), /queryTable3\.xml/);

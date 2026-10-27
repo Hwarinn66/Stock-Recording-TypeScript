@@ -214,6 +214,7 @@ test("cadangan Excel: setiap kolom berisi tipe & nilai yang sesuai", async () =>
     "Stok Sesudah",
     "Status",
     "No Reservasi",
+    "Kode Masuk",
     "Petugas",
     "Catatan",
   ]);

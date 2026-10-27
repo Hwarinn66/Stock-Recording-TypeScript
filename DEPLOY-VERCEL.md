@@ -11,7 +11,7 @@ Vercel "tidur", dan dashboard di Vercel mengecek perubahan stok **setiap 15 deti
 >   perusahaan jangka panjang, pertimbangkan Vercel Pro atau VPS.
 > - Kuota Vercel per bulan: 360 GB-jam memori, 4 jam CPU, 1 juta request. Pantau di
 >   **Vercel → project → Usage**.
-> - Aiven Free: 1 CPU, 1 GB RAM, **disk 1 GB** (foto barang paling cepat memenuhinya),
+> - Aiven Free: 1 CPU, 1 GB RAM, **disk 1 GB**,
 >   maksimal ±46 koneksi, tanpa SLA/support, dan **dimatikan bila lama tidak dipakai**
 >   (ada email pemberitahuan; nyalakan lagi lewat console).
 > - Karena tanpa jaminan, **backup database rutin** (lihat bagian akhir).

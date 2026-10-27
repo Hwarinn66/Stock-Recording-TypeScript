@@ -40,10 +40,10 @@ async function handler(req: Request, { params }: Context) {
     if (method !== "GET") checkOrigin(req);
     const body = async () => {
       if (Number(req.headers.get("content-length") || 0) > 2000000)
-        throw new AppError("TOO_LARGE", "Foto terlalu besar.", 413);
+        throw new AppError("TOO_LARGE", "Data terlalu besar.", 413);
       const text = await req.text();
       if (text.length > 2000000)
-        throw new AppError("TOO_LARGE", "Foto terlalu besar.", 413);
+        throw new AppError("TOO_LARGE", "Data terlalu besar.", 413);
       return JSON.parse(text || "{}");
     };
     if (resource === "auth" && key === "login" && method === "POST") {
@@ -141,6 +141,9 @@ async function handler(req: Request, { params }: Context) {
         key === "apply" ? "Buku darurat disimpan" : "Pratinjau buku darurat",
       );
     }
+    // Aplikasi HP, halaman Cek Barang: detail barang hasil scan (tanpa mengubah apa pun).
+    if (resource === "product-info" && key && method === "GET")
+      return ok(await stock.productInfo(schemas.qrTokenSchema.parse(key)));
     // Aplikasi scanner HP: cek barang dari QR, lalu kirim jumlah (+ no reservasi untuk OUT).
     if (resource === "scan" && key && method === "GET") {
       const token = schemas.qrTokenSchema.parse(key);
@@ -292,6 +295,7 @@ async function handler(req: Request, { params }: Context) {
         "stock_after",
         "status",
         "reservation_number",
+        "in_code",
         "actor_name",
         "notes",
       ];

@@ -156,6 +156,7 @@ class _QueueTile extends StatelessWidget {
             Text(
               'Jumlah $sign${formatQty(item.quantity)} ${product.unit}'
               '${item.reservationNumber != null ? ' · Reservasi ${item.reservationNumber}' : ''}'
+              '${item.inCode != null ? ' · Kode ${item.inCode}' : ''}'
               ' · dicatat ${shortTime(item.recordedAt)}',
             ),
             if (item.lastError != null) ...[

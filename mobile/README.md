@@ -8,8 +8,11 @@ Aplikasi Flutter untuk scan QR barang di gudang. Terhubung langsung ke server we
 2. **Pilih mode** — `IN · Barang Masuk` atau `OUT · Barang Keluar`.
 3. **Scan** QR pada label barang. Server langsung memeriksa barang: QR terdaftar, barang aktif, tidak ada transaksi pending, dan untuk OUT stok tidak 0.
 4. **Jumlah** — keyboard angka saja (huruf/simbol ditolak, juga saat paste). Barang bersatuan Kg memakai keyboard angka dengan koma (mis. `2,5`, maks. 3 angka di belakang koma, tanpa pembulatan); satuan lain bilangan bulat. OUT tidak boleh melebihi stok.
+5. **Kode Masuk** (khusus IN) — ketik 7 angka, titik terisi otomatis: `111.22.33`. Barang kategori **ATK**: `ATK.` sudah tertulis di depan, hasilnya `ATK.111.22.33`. Server menolak format lain.
 5. **No reservasi** (khusus OUT) — tepat 7 angka. Menjadi identitas pengambilan dan divisi pengambil barang.
 6. **Selesai** — stok langsung berubah di server (tanpa approval komputer). Layar hasil menampilkan nomor transaksi dan stok sebelum → sesudah. **Scan berikutnya** kembali ke kamera dengan mode yang sama.
+
+**Cek Barang** (tombol di bawah IN & OUT): scan QR untuk melihat detail barang tanpa mengubah stok — stok & status (Aman/Menipis/Habis), label pergerakan, kategori, satuan, ruangan, lokasi, blok/rak/posisi, keterangan, transaksi menunggu, total masuk/keluar 30 hari, dan 10 transaksi terakhir (termasuk no reservasi & kode masuk). Saat server tidak terjangkau, tampil data terakhir yang tersimpan di HP.
 
 Dashboard admin menampilkan no reservasi di tabel "No reservasi terbaru" dan menu **Riwayat → No reservasi**.
 
@@ -69,6 +72,8 @@ lib/screens/queue_screen.dart    Antrean: menunggu dikirim & ditolak server
 lib/screens/scan_screen.dart     Kamera (mobile_scanner), senter
 lib/screens/quantity_screen.dart Jumlah (keyboard angka; barang Kg boleh berkoma, maks. 3 desimal)
 lib/screens/reservation_screen.dart  No reservasi 7 angka (OUT)
+lib/screens/in_code_screen.dart  Kode Masuk 111.22.33 / ATK.111.22.33 (IN)
+lib/screens/product_info_screen.dart  Cek Barang: detail barang hasil scan
 lib/screens/result_screen.dart   Kirim transaksi (atau simpan di antrean) & ringkasan hasil
 ```
 

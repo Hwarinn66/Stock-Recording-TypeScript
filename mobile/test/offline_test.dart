@@ -216,6 +216,9 @@ void main() {
     expect(find.textContaining('Server tidak terjangkau'), findsOneWidget);
     expect(find.text('Perkiraan stok: 10 PCS'), findsOneWidget);
     await tester.enterText(find.byKey(const Key('quantity')), '4');
+    await tester.tap(find.text('LANJUT'));
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byKey(const Key('in-code')), '1112233');
     await tester.tap(find.text('SELESAI'));
     await tester.pumpAndSettle();
     expect(calls, 0);
@@ -224,6 +227,7 @@ void main() {
     final item = store.offline.pending.single;
     expect(item.mode, Mode.inbound);
     expect(item.quantity, 4);
+    expect(item.inCode, '111.22.33');
     expect(uuid.hasMatch(item.clientRef), isTrue);
   });
 
@@ -256,6 +260,9 @@ void main() {
     );
     await openQuantity(tester, api, Mode.inbound);
     await tester.enterText(find.byKey(const Key('quantity')), '2');
+    await tester.tap(find.text('LANJUT'));
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byKey(const Key('in-code')), '1112233');
     await tester.tap(find.text('SELESAI'));
     await tester.pumpAndSettle();
     expect(find.text('Tersimpan di HP'), findsOneWidget);

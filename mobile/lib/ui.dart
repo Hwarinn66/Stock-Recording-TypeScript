@@ -6,6 +6,8 @@ import 'validators.dart';
 
 const brandGreen = Color(0xFF047857);
 const outBlue = Color(0xFF1D4ED8);
+/// Warna halaman Cek Barang (hanya melihat, bukan transaksi).
+const infoColor = Color(0xFF334155);
 
 Color modeColor(Mode mode) => mode == Mode.inbound ? brandGreen : outBlue;
 

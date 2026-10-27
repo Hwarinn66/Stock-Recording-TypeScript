@@ -3,7 +3,12 @@ import { useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import { Download, Plus } from "lucide-react";
 import { write, timestamp } from "@/lib/client";
-import { allowsDecimal, correction, roundStock, validAmount } from "@/lib/stock";
+import {
+  allowsDecimal,
+  correction,
+  roundStock,
+  validAmount,
+} from "@/lib/stock";
 import { useLive } from "@/hooks/use-live";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
@@ -35,6 +40,8 @@ export function HistoryPage({
 }) {
   const [editing, setEditing] = useState<StockTransaction>();
   const showReservation = type === "out" || type === "reservations";
+  // Kode Masuk (111.22.33 / ATK.111.22.33) dari barang masuk lewat aplikasi HP.
+  const showInCode = type === "in" || type === "all";
   const { version } = useLive();
   const [q, setQ] = useState("");
   const [from, setFrom] = useState("");
@@ -83,12 +90,12 @@ export function HistoryPage({
     type === "all"
       ? "Semua transaksi"
       : type === "in"
-      ? "Riwayat barang masuk"
-      : type === "out"
-        ? "Riwayat barang keluar"
-        : type === "reservations"
-          ? "Nomor reservasi"
-          : "Riwayat koreksi stok";
+        ? "Riwayat barang masuk"
+        : type === "out"
+          ? "Riwayat barang keluar"
+          : type === "reservations"
+            ? "Nomor reservasi"
+            : "Riwayat koreksi stok";
   return (
     <section>
       {bare ? null : compact ? (
@@ -202,6 +209,7 @@ export function HistoryPage({
               <tr>
                 {[
                   ...(showReservation ? ["No Reservasi"] : []),
+                  ...(showInCode ? ["Kode Masuk"] : []),
                   "Nomor Transaksi",
                   "Tanggal / Jam Scan",
                   "Kode Barang",
@@ -227,6 +235,11 @@ export function HistoryPage({
                   {showReservation && (
                     <td className="font-mono text-sm font-bold">
                       {t.reservation_number || "—"}
+                    </td>
+                  )}
+                  {showInCode && (
+                    <td className="font-mono text-sm font-bold">
+                      {t.in_code || "—"}
                     </td>
                   )}
                   <td className="font-semibold">{t.transaction_number}</td>
@@ -311,7 +324,9 @@ function RevisionDialog({
   const quantityChanged = quantityValid && amount !== item.quantity;
   const reservationValid = !outbound || /^\d{7}$/.test(reservation);
   const reservationChanged =
-    outbound && reservationValid && reservation !== (item.reservation_number ?? "");
+    outbound &&
+    reservationValid &&
+    reservation !== (item.reservation_number ?? "");
   // Stok ikut berubah sebesar selisih: IN lebih banyak → naik, OUT lebih banyak → turun.
   const delta = quantityChanged
     ? roundStock((amount - (item.quantity ?? 0)) * (outbound ? -1 : 1))
@@ -347,7 +362,9 @@ function RevisionDialog({
           ]
             .filter(Boolean)
             .join("\n");
-          if (!confirm(`Simpan revisi ${item.transaction_number}?\n\n${summary}`))
+          if (
+            !confirm(`Simpan revisi ${item.transaction_number}?\n\n${summary}`)
+          )
             return;
           setBusy(true);
           try {
@@ -355,7 +372,9 @@ function RevisionDialog({
               `transactions/${item.id}/revise`,
               {
                 ...(quantityChanged ? { quantity: amount } : {}),
-                ...(reservationChanged ? { reservation_number: reservation } : {}),
+                ...(reservationChanged
+                  ? { reservation_number: reservation }
+                  : {}),
                 ...(reason.trim() ? { reason: reason.trim() } : {}),
               },
               "PATCH",
@@ -662,10 +681,15 @@ export function StockCorrection({
   const decimal = allowsDecimal(product.unit);
   const result =
     actual.trim() !== ""
-      ? correction(product.stock, Number(actual.replace(",", ".")), product.unit)
+      ? correction(
+          product.stock,
+          Number(actual.replace(",", ".")),
+          product.unit,
+        )
       : undefined;
   const preview = result && "after" in result ? result : undefined;
-  const invalid = result && "error" in result && !result.same ? result.error : "";
+  const invalid =
+    result && "error" in result && !result.same ? result.error : "";
   const notes = detail.trim() ? `${reason}: ${detail.trim()}` : reason;
   const needsDetail = reason === "Lainnya" && detail.trim().length < 3;
   return (
@@ -736,7 +760,9 @@ export function StockCorrection({
               <p className="text-xs text-slate-500 mt-2">
                 Ganti angka ini dengan jumlah yang benar-benar ada di gudang.
                 Selisihnya dihitung otomatis.
-                {decimal ? " Boleh berkoma (maks. 3 angka di belakang koma)." : ""}
+                {decimal
+                  ? " Boleh berkoma (maks. 3 angka di belakang koma)."
+                  : ""}
               </p>
             )}
             <div className="grid grid-cols-3 bg-slate-50 rounded-lg p-4 mt-4 text-center">
@@ -746,7 +772,9 @@ export function StockCorrection({
               </div>
               <div>
                 <p className="text-xs text-slate-500">Jumlah sebenarnya</p>
-                <p className="text-xl font-bold mt-2">{preview?.after ?? "—"}</p>
+                <p className="text-xl font-bold mt-2">
+                  {preview?.after ?? "—"}
+                </p>
               </div>
               <div>
                 <p className="text-xs text-slate-500">Selisih</p>

@@ -29,6 +29,7 @@ class QueuedTransaction {
     required this.product,
     required this.recordedAt,
     this.reservationNumber,
+    this.inCode,
     this.attempts = 0,
     this.lastError,
   });
@@ -39,6 +40,7 @@ class QueuedTransaction {
     mode: Mode.values.firstWhere((m) => m.code == json['mode']),
     quantity: json['quantity'] as num,
     reservationNumber: json['reservation_number'] as String?,
+    inCode: json['in_code'] as String?,
     product: Product.fromJson(json['product'] as Map<String, dynamic>),
     recordedAt: DateTime.parse(json['recorded_at'] as String),
     attempts: json['attempts'] as int? ?? 0,
@@ -50,6 +52,7 @@ class QueuedTransaction {
   final Mode mode;
   final num quantity;
   final String? reservationNumber;
+  final String? inCode;
   final Product product;
   /// Waktu barang benar-benar masuk/keluar (dikirim ke server sebagai recorded_at).
   final DateTime recordedAt;
@@ -65,6 +68,7 @@ class QueuedTransaction {
     'mode': mode.code,
     'quantity': quantity,
     'reservation_number': reservationNumber,
+    'in_code': inCode,
     'product': product.toJson(),
     'recorded_at': recordedAt.toUtc().toIso8601String(),
     'attempts': attempts,

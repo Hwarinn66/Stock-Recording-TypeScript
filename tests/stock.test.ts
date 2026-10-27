@@ -68,7 +68,7 @@ test("scan requires secure token and explicit mode", () => {
     true,
   );
 });
-test("product create rejects stock assignment and SVG image", () => {
+test("product create rejects stock assignment and photo (fitur foto dihapus)", () => {
   const product = {
     sku: "TEST",
     name: "Test",
@@ -83,10 +83,11 @@ test("product create rejects stock assignment and SVG image", () => {
   assert.equal(
     productSchema.safeParse({
       ...product,
-      image: "data:image/svg+xml;base64,aaa",
+      image: "data:image/png;base64,aaa",
     }).success,
     false,
   );
+  assert.equal(productSchema.safeParse(product).success, true);
 });
 test("Indonesian date filters map to UTC boundaries", () => {
   process.env.APP_TIMEZONE = "Asia/Jakarta";
@@ -124,7 +125,13 @@ test("mobile record: quantity digits, 7-digit reservation only for OUT", async (
   const { recordSchema } = await import("../src/validators");
   const qr_token = "550e8400-e29b-41d4-a716-446655440001";
   const ok = (v: object) => recordSchema.safeParse({ qr_token, ...v }).success;
-  assert.equal(ok({ mode: "IN", quantity: 5 }), true);
+  assert.equal(ok({ mode: "IN", quantity: 5, in_code: "111.22.33" }), true);
+  // Kode masuk wajib untuk IN, tidak boleh untuk OUT.
+  assert.equal(ok({ mode: "IN", quantity: 5 }), false);
+  assert.equal(
+    ok({ mode: "OUT", quantity: 5, reservation_number: "0012345", in_code: "111.22.33" }),
+    false,
+  );
   assert.equal(ok({ mode: "OUT", quantity: 5, reservation_number: "0012345" }), true);
   assert.equal(ok({ mode: "OUT", quantity: 5 }), false);
   for (const reservation_number of ["123456", "12345678", "12a4567", " 123456"])
@@ -134,6 +141,18 @@ test("mobile record: quantity digits, 7-digit reservation only for OUT", async (
   for (const quantity of [0, -1, 1.0005, "5"])
     assert.equal(ok({ mode: "IN", quantity }), false);
   assert.equal(ok({ mode: "IN", quantity: 5, stock: 10 }), false);
+});
+
+test("kode masuk: 111.22.33, barang ATK diawali ATK.", async () => {
+  const { validInCode, isAtkCategory } = await import("../src/lib/in-code");
+  assert.equal(validInCode("111.22.33", false), true);
+  assert.equal(validInCode("ATK.111.22.33", true), true);
+  for (const bad of ["ATK.111.22.33", "11.22.33", "111.2.33", "111.22.333", "111-22-33", "111.22.33 ", "abc.de.fg"])
+    assert.equal(validInCode(bad, false), false, bad);
+  for (const bad of ["111.22.33", "ATK111.22.33", "ATK.11.22.33", "atk.111.22.33"])
+    assert.equal(validInCode(bad, true), false, bad);
+  assert.equal(isAtkCategory(" atk "), true);
+  assert.equal(isAtkCategory("Sparepart"), false);
 });
 
 test("history revision accepts quantity and/or 7-digit reservation only", async () => {

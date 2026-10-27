@@ -24,6 +24,7 @@ Future<void> submitTransaction(
   required num quantity,
   required String clientRef,
   String? reservationNumber,
+  String? inCode,
   bool offline = false,
 }) async {
   final recordedAt = DateTime.now();
@@ -40,6 +41,7 @@ Future<void> submitTransaction(
         mode: mode,
         quantity: quantity,
         reservationNumber: reservationNumber,
+        inCode: inCode,
         clientRef: clientRef,
       );
       if (!context.mounted) return;
@@ -67,6 +69,7 @@ Future<void> submitTransaction(
     mode: mode,
     quantity: quantity,
     reservationNumber: reservationNumber,
+    inCode: inCode,
     product: product,
     recordedAt: recordedAt,
   );
@@ -103,6 +106,7 @@ class QueuedScreen extends StatelessWidget {
         ('Lokasi', product.place),
         ('Jumlah', '$sign${formatQty(item.quantity)} ${product.unit}'),
         if (item.reservationNumber != null) ('No reservasi', item.reservationNumber!),
+        if (item.inCode != null) ('Kode masuk', item.inCode!),
         ('Dicatat', shortTime(item.recordedAt)),
         ('Antrean', '$waiting transaksi menunggu dikirim'),
       ],
@@ -140,6 +144,7 @@ class ResultScreen extends StatelessWidget {
         ('No transaksi', result.transactionNumber),
         if (result.reservationNumber != null)
           ('No reservasi', result.reservationNumber!),
+        if (result.inCode != null) ('Kode masuk', result.inCode!),
         ('Barang', '${product.sku} · ${product.name}'),
         ('Lokasi', product.place),
         ('Jumlah', '$sign${formatQty(result.quantity)} ${product.unit}'),

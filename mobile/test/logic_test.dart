@@ -92,7 +92,6 @@ void main() {
               'stock': 99,
               'location_code': 'A.01.03',
               'room_name': 'Ruangan 1',
-              'image': null,
             },
           }),
           200,

@@ -136,9 +136,9 @@ export async function history(
   if (reservationsOnly) where.push("t.reservation_number IS NOT NULL");
   if (f.q) {
     where.push(
-      "(p.name LIKE ? OR p.sku LIKE ? OR t.location_code LIKE ? OR t.transaction_number LIKE ? OR t.room_name LIKE ? OR t.reservation_number LIKE ?)",
+      "(p.name LIKE ? OR p.sku LIKE ? OR t.location_code LIKE ? OR t.transaction_number LIKE ? OR t.room_name LIKE ? OR t.reservation_number LIKE ? OR t.in_code LIKE ?)",
     );
-    args.push(...Array(6).fill(`%${f.q}%`));
+    args.push(...Array(7).fill(`%${f.q}%`));
   }
   if (f.product_id) {
     where.push("t.product_id=?");

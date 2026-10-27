@@ -66,6 +66,26 @@ String? validateQuantity(String? input, {num? stock, bool decimal = false}) {
   return null;
 }
 
+/// Kode Masuk: 7 angka, titik otomatis → 111.22.33 (sama dengan aturan server).
+const inCodeDigits = 7;
+String formatInCode(String input) {
+  final d = input.replaceAll(RegExp(r'\D'), '');
+  final digits = d.length > inCodeDigits ? d.substring(0, inCodeDigits) : d;
+  if (digits.length <= 3) return digits;
+  if (digits.length <= 5) return '${digits.substring(0, 3)}.${digits.substring(3)}';
+  return '${digits.substring(0, 3)}.${digits.substring(3, 5)}.${digits.substring(5)}';
+}
+
+String? validateInCode(String? input) {
+  if (!RegExp(r'^\d{3}\.\d{2}\.\d{2}$').hasMatch(input ?? '')) {
+    return 'Kode masuk harus 7 angka, mis. 111.22.33.';
+  }
+  return null;
+}
+
+/// Kode lengkap yang dikirim ke server: barang ATK diawali "ATK.".
+String fullInCode(String input, {required bool atk}) => atk ? 'ATK.$input' : input;
+
 String? validateReservation(String? input) {
   final value = input ?? '';
   if (!RegExp(r'^\d{7}$').hasMatch(value)) {

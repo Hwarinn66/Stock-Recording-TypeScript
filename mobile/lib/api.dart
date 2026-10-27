@@ -16,6 +16,8 @@ enum Mode {
   final String code;
   final String label;
   bool get needsReservation => this == Mode.outbound;
+  /// Barang masuk wajib Kode Masuk (111.22.33; barang ATK: ATK.111.22.33).
+  bool get needsInCode => this == Mode.inbound;
 }
 
 class ApiException implements Exception {
@@ -39,6 +41,7 @@ class Product {
     required this.stock,
     required this.locationCode,
     this.roomName,
+    this.categoryName,
   });
 
   factory Product.fromJson(Map<String, dynamic> json) => Product(
@@ -49,6 +52,7 @@ class Product {
     stock: json['stock'] as num,
     locationCode: json['location_code'] as String,
     roomName: json['room_name'] as String?,
+    categoryName: json['category_name'] as String?,
   );
 
   final int id;
@@ -58,9 +62,13 @@ class Product {
   final num stock;
   final String locationCode;
   final String? roomName;
+  final String? categoryName;
 
   String get place =>
       roomName == null ? locationCode : '$roomName · $locationCode';
+
+  /// Barang kategori ATK: Kode Masuk diawali "ATK.".
+  bool get isAtk => (categoryName ?? '').trim().toUpperCase() == 'ATK';
 
   Map<String, Object?> toJson() => {
     'id': id,
@@ -70,7 +78,93 @@ class Product {
     'stock': stock,
     'location_code': locationCode,
     'room_name': roomName,
+    'category_name': categoryName,
   };
+}
+
+/// Riwayat singkat di halaman Cek Barang.
+class ProductHistory {
+  ProductHistory({
+    required this.number,
+    required this.type,
+    required this.status,
+    required this.scannedAt,
+    this.quantity,
+    this.stockAfter,
+    this.reservationNumber,
+    this.inCode,
+    this.actor,
+  });
+
+  factory ProductHistory.fromJson(Map<String, dynamic> json) => ProductHistory(
+    number: json['transaction_number'] as String,
+    type: json['transaction_type'] as String,
+    status: json['status'] as String,
+    scannedAt: DateTime.parse('${(json['scanned_at'] as String).replaceFirst(' ', 'T')}Z'),
+    quantity: json['quantity'] as num?,
+    stockAfter: json['stock_after'] as num?,
+    reservationNumber: json['reservation_number'] as String?,
+    inCode: json['in_code'] as String?,
+    actor: json['actor_name'] as String?,
+  );
+
+  final String number;
+  final String type; // IN / OUT / ADJUSTMENT
+  final String status; // APPROVED / PENDING / CANCELLED
+  final DateTime scannedAt;
+  final num? quantity;
+  final num? stockAfter;
+  final String? reservationNumber;
+  final String? inCode;
+  final String? actor;
+}
+
+/// Detail barang untuk halaman Cek Barang.
+class ProductInfo {
+  ProductInfo({
+    required this.product,
+    required this.active,
+    required this.history,
+    required this.in30,
+    required this.out30,
+    this.movement,
+    this.description,
+    this.blockCode,
+    this.rackNumber,
+    this.positionNumber,
+    this.pending,
+  });
+
+  factory ProductInfo.fromJson(Map<String, dynamic> json) {
+    final p = json['product'] as Map<String, dynamic>;
+    return ProductInfo(
+      product: Product.fromJson(p),
+      active: p['active'] == 1 || p['active'] == true,
+      movement: p['movement_class'] as String?,
+      description: p['description'] as String?,
+      blockCode: p['block_code'] as String?,
+      rackNumber: p['rack_number'] as int?,
+      positionNumber: p['position_number'] as int?,
+      pending: json['pending'] as String?,
+      in30: json['in_30'] as num,
+      out30: json['out_30'] as num,
+      history: (json['history'] as List)
+          .map((e) => ProductHistory.fromJson(e as Map<String, dynamic>))
+          .toList(),
+    );
+  }
+
+  final Product product;
+  final bool active;
+  final String? movement;
+  final String? description;
+  final String? blockCode;
+  final int? rackNumber;
+  final int? positionNumber;
+  final String? pending;
+  final num in30;
+  final num out30;
+  final List<ProductHistory> history;
 }
 
 class TransactionResult {
@@ -81,6 +175,7 @@ class TransactionResult {
     required this.stockAfter,
     required this.product,
     this.reservationNumber,
+    this.inCode,
     this.replayed = false,
   });
 
@@ -91,6 +186,7 @@ class TransactionResult {
         stockBefore: json['stock_before'] as num,
         stockAfter: json['stock_after'] as num,
         reservationNumber: json['reservation_number'] as String?,
+        inCode: json['in_code'] as String?,
         product: Product.fromJson(json['product'] as Map<String, dynamic>),
         replayed: json['replayed'] as bool? ?? false,
       );
@@ -100,6 +196,7 @@ class TransactionResult {
   final num stockBefore;
   final num stockAfter;
   final String? reservationNumber;
+  final String? inCode;
   final Product product;
   /// true = transaksi ini sudah tersimpan sebelumnya (kiriman ulang, tidak dicatat dua kali).
   final bool replayed;
@@ -167,6 +264,7 @@ class ApiClient {
     required Mode mode,
     required num quantity,
     String? reservationNumber,
+    String? inCode,
     String? clientRef,
     DateTime? recordedAt,
   }) async {
@@ -175,12 +273,21 @@ class ApiClient {
       'mode': mode.code,
       'quantity': quantity,
       'reservation_number': ?reservationNumber,
+      'in_code': ?inCode,
       'client_ref': ?clientRef,
       'recorded_at': ?recordedAt?.toUtc().toIso8601String(),
     });
     final result = TransactionResult.fromJson(data as Map<String, dynamic>);
     await store.offline.rememberProduct(token, result.product);
     return result;
+  }
+
+  /// Halaman Cek Barang: detail barang hasil scan (tidak mengubah apa pun).
+  Future<ProductInfo> productInfo(String token) async {
+    final data = await _send('GET', 'product-info/${Uri.encodeComponent(token)}');
+    final info = ProductInfo.fromJson(data as Map<String, dynamic>);
+    if (info.active) await store.offline.rememberProduct(token, info.product);
+    return info;
   }
 
   /// Daftar barang aktif (token QR → barang) untuk scan saat server tidak terjangkau.
@@ -221,6 +328,7 @@ class ApiClient {
             mode: item.mode,
             quantity: item.quantity,
             reservationNumber: item.reservationNumber,
+            inCode: item.inCode,
             clientRef: item.clientRef,
             recordedAt: item.recordedAt,
           );

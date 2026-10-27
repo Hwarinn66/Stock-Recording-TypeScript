@@ -17,7 +17,6 @@ export interface Product {
   rack_number: number;
   position_number: number;
   qr_token: string;
-  image: string | null;
   description: string | null;
   active: number;
   created_at: string;
@@ -40,6 +39,7 @@ export interface StockTransaction {
   cancelled_at: string | null;
   notes: string | null;
   reservation_number: string | null;
+  in_code?: string | null;
   client_ref?: string | null;
   actor_name: string | null;
   name: string;
@@ -68,7 +68,7 @@ export interface LocationLookup extends Lookup {
   legacy_code?: string | null;
 }
 
-// Baris daftar barang: tanpa foto agar respons tetap kecil.
-export interface InventoryProduct extends Omit<Product, "image"> {
+// Baris daftar barang + total barang keluar.
+export interface InventoryProduct extends Product {
   out_total: number;
 }

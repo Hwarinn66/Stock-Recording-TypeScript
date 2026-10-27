@@ -171,6 +171,23 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                     ),
                   ),
                   const SizedBox(height: 16),
+                  // Cek Barang: scan untuk melihat detail barang (tidak mengubah stok).
+                  OutlinedButton.icon(
+                    key: const Key('info-button'),
+                    onPressed: () => _open(context, null),
+                    style: OutlinedButton.styleFrom(
+                      foregroundColor: infoColor,
+                      minimumSize: const Size.fromHeight(56),
+                      side: const BorderSide(color: infoColor, width: 1.5),
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                    ),
+                    icon: const Icon(Icons.manage_search),
+                    label: const Text(
+                      'CEK BARANG · lihat detail barang',
+                      style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+                    ),
+                  ),
+                  const SizedBox(height: 16),
                   Text(
                     updated == null
                         ? 'Data barang belum tersimpan di HP (dibutuhkan untuk scan saat server mati).'
@@ -192,7 +209,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     );
   }
 
-  void _open(BuildContext context, Mode mode) {
+  void _open(BuildContext context, Mode? mode) {
     Navigator.of(context).push(
       MaterialPageRoute<void>(
         settings: const RouteSettings(name: ScanScreen.routeName),

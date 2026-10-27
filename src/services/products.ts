@@ -14,9 +14,8 @@ import type { PoolConnection } from "mysql2/promise";
 
 const productExtras = `c.name category_name,l.code location_code,${hierarchyFields}`;
 const productJoins = ` FROM products p JOIN categories c ON c.id=p.category_id JOIN locations l ON l.id=p.location_id ${hierarchyJoins}`;
-export const productSelect = `SELECT p.*,${productExtras}${productJoins}`;
-// Daftar barang tidak pernah menampilkan foto, jadi kolom image tidak ikut diambil.
-export const productListSelect = `SELECT ${productColumns},${productExtras}${productJoins}`;
+export const productSelect = `SELECT ${productColumns},${productExtras}${productJoins}`;
+export const productListSelect = productSelect;
 
 export async function getProduct(id: number) {
   const [p] = await rows<Product>(productSelect + " WHERE p.id=?", [id]);
@@ -117,7 +116,7 @@ export async function createProduct(input: z.infer<typeof productSchema>) {
     await checkCategory(input.category_id, conn);
 
     const result = await execute(
-      "INSERT INTO products(sku,name,category_id,unit,location_id,qr_token,image,description,movement_class) VALUES (?,?,?,?,?,?,?,?,?)",
+      "INSERT INTO products(sku,name,category_id,unit,location_id,qr_token,description,movement_class) VALUES (?,?,?,?,?,?,?,?)",
       [
         input.sku,
         input.name,
@@ -125,7 +124,6 @@ export async function createProduct(input: z.infer<typeof productSchema>) {
         input.unit,
         locationId,
         randomUUID(),
-        input.image ?? null,
         input.description ?? null,
         input.movement_class ?? null,
       ],
@@ -172,13 +170,6 @@ export async function editProduct(
       ],
       conn,
     );
-    // Foto hanya diubah bila dikirim; null berarti foto dihapus.
-    if (input.image !== undefined)
-      await execute(
-        "UPDATE products SET image=? WHERE id=?",
-        [input.image, id],
-        conn,
-      );
     await publish(conn, "product");
     return { id };
   });
