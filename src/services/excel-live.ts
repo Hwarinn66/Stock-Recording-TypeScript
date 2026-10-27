@@ -7,7 +7,7 @@ import { historyColumns, stockColumns, type BackupData } from "./excel-backup";
 export const LIVE_FILE = "stok-gudang-live.xlsx";
 export const LIVE_DATA_DIR = "_data";
 type Sheet<T> = { query: string; file: string; columns: Column<T>[] };
-const info: Column<BackupData>[] = [
+export const infoColumns: Column<BackupData>[] = [
   {
     header: "Diperbarui",
     width: 20,
@@ -28,7 +28,7 @@ const info: Column<BackupData>[] = [
   },
 ];
 const sheets = {
-  info: { query: "Info", file: "info.csv", columns: info },
+  info: { query: "Info", file: "info.csv", columns: infoColumns },
   stock: { query: "Stok", file: "stok.csv", columns: stockColumns },
   history: { query: "Riwayat", file: "riwayat.csv", columns: historyColumns },
 };
@@ -60,7 +60,7 @@ function toCsv<T>(columns: Column<T>[], rows: T[]) {
 /** File CSV untuk folder _data: { nama file: isi }. */
 export function liveCsvFiles(data: BackupData) {
   return {
-    [sheets.info.file]: toCsv(info, [data]),
+    [sheets.info.file]: toCsv(infoColumns, [data]),
     [sheets.stock.file]: toCsv(
       stockColumns,
       data.products.map((p, i) => ({ ...p, no: i + 1 })),
@@ -78,7 +78,7 @@ const mType: Record<ColumnKind, string> = {
   time: "type time",
   datetime: "type datetime",
 };
-const xlFormat: Record<ColumnKind, string> = {
+export const xlFormat: Record<ColumnKind, string> = {
   text: "@",
   code: "@",
   integer: "0",
@@ -109,7 +109,7 @@ const bgr = (argb: string) => {
 };
 const ps = (s: string) => "'" + s.replaceAll("'", "''") + "'";
 /** Aturan warna sama dengan file cadangan & web. */
-const highlights = {
+export const highlights = {
   stock: {
     column: "Status Stok",
     rules: [

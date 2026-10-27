@@ -2,10 +2,10 @@
 import { useRef, useState } from "react";
 import { toast } from "sonner";
 import { Download, FileSpreadsheet, Upload } from "lucide-react";
-import { api } from "@/lib/client";
+import { api, timestamp, write } from "@/lib/client";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
-import { pill } from "./shared";
+import { pill, useData } from "./shared";
 type Status = "ready" | "saved" | "imported" | "conflict" | "error";
 type Row = {
   no: number;
@@ -53,6 +53,87 @@ function when(row: Row) {
     year: "numeric",
   }).format(new Date(Date.UTC(y, m - 1, d)));
   return `${day} ${row.time ?? ""}`;
+}
+/**
+ * Excel live: file yang diunduh sekali di PC mana pun, lalu mengambil data sendiri
+ * dari web tiap menit. Kunci akses baca-saja bisa dicabut semuanya dari sini.
+ */
+function LiveExcelCard() {
+  const status = useData<{ active: number; last_used_at: string | null }>(
+    "excel-live/status",
+  );
+  const [busy, setBusy] = useState(false);
+  const revoke = async () => {
+    if (
+      !confirm(
+        "Cabut akses semua file Excel live yang sudah diunduh? File itu berhenti mendapat data; unduh ulang untuk memakai lagi.",
+      )
+    )
+      return;
+    setBusy(true);
+    try {
+      await write("excel-live/revoke");
+      toast.success("Akses Excel live dicabut");
+      await status.reload();
+    } catch (e) {
+      toast.error((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  };
+  const active = status.data?.active ?? 0;
+  return (
+    <Card className="flex flex-col">
+      <h3 className="flex items-center gap-2 font-bold">
+        <FileSpreadsheet className="size-4 text-emerald-600" />
+        Excel live
+      </h3>
+      <ol className="mt-2 list-decimal space-y-1.5 pl-4 text-sm text-slate-500">
+        <li>Unduh file di PC mana pun (cukup sekali per PC).</li>
+        <li>
+          Buka di Excel, klik <b>Enable Editing</b> lalu <b>Enable Content</b>.
+        </li>
+        <li>
+          Biarkan terbuka: stok & riwayat diambil sendiri dari web tiap 1 menit
+          dan setiap file dibuka. Tidak perlu laptop atau program lain.
+        </li>
+      </ol>
+      <p className="mt-3 text-xs text-slate-400">
+        {active
+          ? `${active} file aktif · terakhir mengambil data ${timestamp(status.data?.last_used_at)}`
+          : "Belum ada file Excel live yang aktif."}{" "}
+        File berisi kunci baca-saja: siapa pun yang memegangnya bisa melihat
+        stok.
+      </p>
+      <div className="mt-auto grid gap-2 pt-4 sm:grid-cols-2">
+        <Button asChild>
+          <a
+            href="/api/excel-live"
+            onClick={() => setTimeout(() => void status.reload(), 3000)}
+          >
+            <Download />
+            Unduh Excel live
+          </a>
+        </Button>
+        <Button asChild variant="outline">
+          <a href="/api/backup/excel" title="Potret sesaat, tidak ikut berubah">
+            <Download />
+            Unduh cadangan sekali
+          </a>
+        </Button>
+      </div>
+      {active > 0 && (
+        <button
+          type="button"
+          disabled={busy}
+          onClick={revoke}
+          className="mt-3 self-start text-xs text-red-700 hover:underline"
+        >
+          Cabut akses semua file Excel live
+        </button>
+      )}
+    </Card>
+  );
 }
 /** Cadangan Excel (unduh) dan buku darurat (unduh template, unggah, pratinjau, simpan). */
 export function ExcelTools() {
@@ -105,23 +186,7 @@ export function ExcelTools() {
   return (
     <div className="space-y-6">
       <div className="grid gap-6 md:grid-cols-2">
-        <Card className="flex flex-col">
-          <h3 className="flex items-center gap-2 font-bold">
-            <FileSpreadsheet className="size-4 text-emerald-600" />
-            Cadangan Excel
-          </h3>
-          <p className="mt-2 mb-4 text-sm text-slate-500">
-            Stok semua barang aktif dan riwayat transaksi 90 hari terakhir dalam
-            satu file Excel. Cadangan otomatis di komputer: jalankan{" "}
-            <span className="font-mono text-xs">scripts\backup-excel.cmd</span>.
-          </p>
-          <Button asChild variant="outline" className="mt-auto w-full">
-            <a href="/api/backup/excel">
-              <Download />
-              Unduh cadangan Excel
-            </a>
-          </Button>
-        </Card>
+        <LiveExcelCard />
         <Card className="flex flex-col">
           <h3 className="font-bold">Buku darurat</h3>
           <ol className="mt-2 list-decimal space-y-1.5 pl-4 text-sm text-slate-500">

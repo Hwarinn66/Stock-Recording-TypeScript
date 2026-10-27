@@ -279,6 +279,26 @@ test("workbook live: CSV berisi nilai sesuai jenis kolom, Power Query memakai ti
   assert.match(script, /RefreshPeriod = 1/);
 });
 
+test("Excel live dari web: angka & tanggal lewat x:num, teks dikunci '@', aman dari HTML", async () => {
+  const { feedTable } = await import("../src/services/excel-feed");
+  const { stockColumns } = await import("../src/services/excel-backup");
+  const html = feedTable(stockColumns, [
+    { ...products[0], name: 'BAUT <M8> & "Ø"\nbaris2', no: 1 },
+    { ...products[1], no: 2 },
+  ]);
+  assert.match(html, /<th>Kode Barang<\/th>/);
+  assert.match(
+    html,
+    /<td x:num="1">1<\/td><td style="mso-number-format:'\\@'">00123<\/td>/,
+  );
+  assert.match(html, /BAUT &lt;M8&gt; &amp; &quot;Ø&quot; · baris2/);
+  assert.match(html, /<td x:num="548.8">548.8<\/td>/);
+  // 26/10/2026 10:15 WIB → nomor seri Excel 46321 + 10:15.
+  const serial = Number(html.match(/<td x:num="(4632[0-9.]+)">/)![1]);
+  assert.ok(Math.abs(serial - (46321 + (10 * 60 + 15) / 1440)) < 1e-6);
+  assert.match(html, /<td><\/td><\/tr><\/table>/); // Transaksi Terakhir kosong
+});
+
 const catalog: CatalogProduct[] = [
   {
     sku: "00123",

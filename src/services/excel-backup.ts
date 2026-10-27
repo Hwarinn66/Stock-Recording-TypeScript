@@ -40,22 +40,32 @@ export type BackupData = {
 };
 export const historyDays = () =>
   Math.min(3650, Math.max(1, Number(process.env.EXCEL_HISTORY_DAYS) || 90));
-export async function loadBackupData(
-  days = historyDays(),
-): Promise<BackupData> {
-  const generatedAt = new Date();
-  const since = new Date(generatedAt.getTime() - days * 86400000);
-  const products = await rows<BackupProduct>(
+/** Stok terakhir semua barang aktif, urut nama. */
+export function backupProducts() {
+  return rows<BackupProduct>(
     `SELECT p.sku,p.name,c.name category_name,rm.name room_name,l.code location_code,p.stock,p.unit,p.movement_class,lt.last_at last_transaction_at
      FROM products p JOIN categories c ON c.id=p.category_id JOIN locations l ON l.id=p.location_id${hierarchyJoins}
      LEFT JOIN (SELECT product_id,MAX(scanned_at) last_at FROM stock_transactions WHERE status='APPROVED' GROUP BY product_id) lt ON lt.product_id=p.id
      WHERE p.active=1 ORDER BY p.name,p.sku`,
   );
-  const history = await rows<StockTransaction>(
+}
+/** Riwayat transaksi sejak `since`, terbaru di atas. */
+export function backupHistory(since: Date) {
+  return rows<StockTransaction>(
     transactionSelect +
       " WHERE t.scanned_at>=? ORDER BY t.scanned_at DESC,t.id DESC",
     [sqlDateTime(since)],
   );
+}
+export async function loadBackupData(
+  days = historyDays(),
+): Promise<BackupData> {
+  const generatedAt = new Date();
+  const since = new Date(generatedAt.getTime() - days * 86400000);
+  const [products, history] = await Promise.all([
+    backupProducts(),
+    backupHistory(since),
+  ]);
   return { products, history, generatedAt, since, days };
 }
 export const movementLabel = (m: Product["movement_class"]) =>

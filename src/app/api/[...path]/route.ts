@@ -15,6 +15,17 @@ import {
   importEmergency,
   readEmergencyBook,
 } from "@/services/emergency";
+import {
+  buildFeedWorkbook,
+  createFeedToken,
+  feedHtml,
+  feedKinds,
+  feedTokenStatus,
+  revokeFeedTokens,
+  revokedHtml,
+  checkFeedToken,
+  type FeedKind,
+} from "@/services/excel-feed";
 import { xlsxResponse } from "@/lib/excel";
 import { localDay } from "@/lib/time";
 export const runtime = "nodejs";
@@ -40,6 +51,22 @@ async function handler(req: Request, { params }: Context) {
       await login(input.username, input.password);
       return ok(null, "Login berhasil");
     }
+    // Excel live: Excel (tanpa cookie login) mengambil data dengan kunci baca-saja.
+    if (resource === "excel-feed" && method === "GET") {
+      if (!feedKinds.includes(key as FeedKind))
+        throw new AppError("NOT_FOUND", "Endpoint tidak ditemukan.", 404);
+      const valid = await checkFeedToken(url.searchParams.get("key") ?? "");
+      return new Response(
+        valid ? await feedHtml(key as FeedKind) : revokedHtml,
+        {
+          headers: {
+            "Content-Type": "text/html; charset=utf-8",
+            "Cache-Control": "no-store",
+            "X-Robots-Tag": "noindex",
+          },
+        },
+      );
+    }
     const user = await requireUser();
     if (resource === "auth" && key === "logout" && method === "POST") {
       await logout();
@@ -57,6 +84,31 @@ async function handler(req: Request, { params }: Context) {
       return xlsxResponse(
         await backupWorkbookBuffer(),
         `stok-gudang-${localDay()}.xlsx`,
+      );
+    // Excel live untuk PC mana pun: unduh file (kunci baru), status, cabut semua kunci.
+    if (resource === "excel-live" && !key && method === "GET") {
+      // Alamat yang dibuka pengguna (Vercel mengirim X-Forwarded-*), bukan alamat internal server.
+      const host =
+        req.headers.get("x-forwarded-host") ??
+        req.headers.get("host") ??
+        url.host;
+      const proto =
+        req.headers.get("x-forwarded-proto")?.split(",")[0] ??
+        url.protocol.replace(":", "");
+      return xlsxResponse(
+        await buildFeedWorkbook(
+          `${proto}://${host}`,
+          await createFeedToken(user.id),
+        ),
+        "stok-gudang-live.xlsx",
+      );
+    }
+    if (resource === "excel-live" && key === "status" && method === "GET")
+      return ok(await feedTokenStatus());
+    if (resource === "excel-live" && key === "revoke" && method === "POST")
+      return ok(
+        { revoked: await revokeFeedTokens() },
+        "Akses Excel live dicabut",
       );
     // Buku darurat Excel: unduh template, lalu unggah untuk pratinjau / simpan.
     if (resource === "emergency" && key === "template" && method === "GET")

@@ -742,6 +742,47 @@ test("HP: kiriman ulang dengan client_ref sama tidak dicatat dua kali", async (t
   });
 });
 
+test("Excel live dari web: kunci baca-saja, isi file, cabut akses", async () => {
+  const {
+    buildFeedWorkbook,
+    checkFeedToken,
+    createFeedToken,
+    feedHtml,
+    feedTokenStatus,
+    revokeFeedTokens,
+  } = await import("../../src/services/excel-feed");
+  const JSZip = (await import("jszip")).default;
+  await execute("DELETE FROM excel_feed_tokens");
+  const token = await createFeedToken(user);
+  assert.match(token, /^[0-9a-f]{48}$/);
+  // Yang tersimpan hanya hash, bukan kuncinya.
+  assert.equal((await rows("SELECT * FROM excel_feed_tokens WHERE token_hash=?", [token])).length, 0);
+  assert.equal(await checkFeedToken(token), true);
+  assert.equal(await checkFeedToken("0".repeat(48)), false);
+  assert.equal(await checkFeedToken("bukan-kunci"), false);
+  assert.equal((await feedTokenStatus()).active, 1);
+  assert.ok((await feedTokenStatus()).last_used_at);
+  assert.match(await feedHtml("stok"), /<th>Status Stok<\/th>/);
+  assert.match(await feedHtml("info"), /<th>Diperbarui<\/th>/);
+
+  const zip = await JSZip.loadAsync(await buildFeedWorkbook("https://gudang.example", token));
+  const connections = await zip.file("xl/connections.xml")!.async("string");
+  for (const kind of ["stok", "info", "riwayat"])
+    assert.ok(connections.includes(`url="https://gudang.example/api/excel-feed/${kind}?key=${token}"`), kind);
+  assert.equal((connections.match(/interval="1"/g) ?? []).length, 3);
+  assert.equal((connections.match(/refreshOnLoad="1"/g) ?? []).length, 3);
+  const workbook = await zip.file("xl/workbook.xml")!.async("string");
+  assert.match(workbook, /<definedName name="Stok" localSheetId="0">'Stok Barang'!\$A\$5:\$K\$\d+<\/definedName>/);
+  assert.match(workbook, /<definedName name="Riwayat" localSheetId="1">'Riwayat Transaksi'!\$A\$4:\$P\$\d+<\/definedName>/);
+  assert.ok(zip.file("xl/queryTables/queryTable3.xml"));
+  assert.match(await zip.file("[Content_Types].xml")!.async("string"), /queryTable3\.xml/);
+  assert.match(await zip.file("xl/worksheets/_rels/sheet2.xml.rels")!.async("string"), /queryTable3\.xml/);
+
+  assert.equal(await revokeFeedTokens(), 1);
+  assert.equal(await checkFeedToken(token), false);
+  assert.equal((await feedTokenStatus()).active, 0);
+});
+
 test("buku darurat Excel: pratinjau, simpan, unggah ulang aman", async (t) => {
   const make = async (sku: string, unit: string, position: number, stock: number) => {
     const id = (

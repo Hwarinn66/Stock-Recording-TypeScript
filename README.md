@@ -118,7 +118,16 @@ Tiga lapis cadangan. Arah datanya sengaja dibuat aman: Excel cadangan **hanya di
 
 **Wajib sekali setelah update ini:** backup database, lalu jalankan **`migrations/008_client_ref.sql`** di setiap database yang dipakai (Laragon dan/atau Aiven) **sebelum** source baru dijalankan/di-deploy. Migrasi hanya menambah kolom `stock_transactions.client_ref` (NULL) dan unique index; data lama tidak berubah. Tanpa migrasi ini transaksi dari HP akan gagal.
 
-### 1. Cadangan Excel otomatis di komputer
+### Excel live di PC mana pun (tanpa laptop / program)
+
+Di PC mana pun yang punya Microsoft Excel: buka web → **Pengaturan → Unduh Excel live** → buka file → klik **Enable Editing** lalu **Enable Content** (sekali per PC). Biarkan terbuka: Excel mengambil stok & riwayat **langsung dari web** setiap 1 menit dan setiap file dibuka. Tidak butuh laptop gudang atau program tambahan, cukup internet.
+
+- Memakai koneksi web bawaan Excel. Data dikirim dalam format yang dibaca sama di semua PC: angka & tanggal lewat `x:num` (tidak tergantung pemisah desimal Windows), kode barang & no reservasi dikunci sebagai teks (nol di depan aman).
+- Setiap unduhan berisi **kunci baca-saja** (di database hanya hash-nya, tabel `excel_feed_tokens`). Siapa pun yang memegang file bisa melihat stok, tapi tidak bisa mengubah apa pun. **Pengaturan → Cabut akses semua file Excel live** mematikan semua file; file lama lalu menampilkan pesan untuk mengunduh ulang.
+- Butuh **`migrations/009_excel_feed_tokens.sql`** sekali (sesudah 008).
+- Setiap file yang terbuka memanggil web 3× per menit (stok, riwayat, info).
+
+### 1. Cadangan Excel otomatis di komputer (opsional)
 
 Klik dua kali **`scripts\backup-excel.cmd`** (memakai `.env.aiven` bila ada, selain itu `.env.local`), atau jalankan `npm run excel:backup:cloud` / `npm run excel:backup`. Biarkan jendelanya terbuka. Program memeriksa database setiap 3 detik dan menulis ulang file bila ada perubahan:
 
@@ -284,6 +293,8 @@ Semua API berbasis JSON kecuali QR SVG, CSV dan SSE. Autentikasi menggunakan ses
 | POST         | `/api/transactions`                                               | `{qr_token,mode,quantity,reservation_number?,client_ref?,recorded_at?}`; OUT wajib no reservasi 7 angka; stok langsung berubah. `client_ref` (UUID) sama = dijawab dengan transaksi yang sudah ada (`replayed:true`); `recorded_at` (ISO, maks. 7 hari lalu) untuk antrean offline |
 | GET          | `/api/catalog`                                                    | barang aktif + `qr_token` untuk disimpan di HP (scan offline) |
 | GET          | `/api/backup/excel`                                               | unduh cadangan Excel (stok + riwayat 90 hari)      |
+| GET          | `/api/excel-live`, `/api/excel-live/status`; POST `/api/excel-live/revoke` | unduh Excel live (kunci baru) / jumlah file aktif / cabut semua kunci |
+| GET          | `/api/excel-feed/stok\|riwayat\|info?key=…`                     | data untuk Excel live (tanpa cookie, kunci baca-saja) |
 | GET          | `/api/emergency/template`                                         | unduh template buku darurat (.xlsx)                |
 | POST         | `/api/emergency/preview`, `/api/emergency/apply`                  | body = isi file .xlsx (maks. 4 MB); pratinjau / simpan buku darurat |
 | POST         | `/api/scan`                                                       | lama: `{qr_token,mode}` → transaksi PENDING        |
