@@ -13,6 +13,15 @@ Aplikasi Flutter untuk scan QR barang di gudang. Terhubung langsung ke server we
 
 Dashboard admin menampilkan no reservasi di tabel "No reservasi terbaru" dan menu **Riwayat → No reservasi**.
 
+## Saat server tidak terjangkau (offline)
+
+- Aplikasi menyimpan **daftar barang** di HP (diperbarui otomatis saat online, tiap 30 menit). Menu utama menampilkan "Data barang di HP: N barang". Buka aplikasi minimal sekali saat online agar daftar ini terisi.
+- Bila server tidak terjangkau (Wi-Fi putus, server/database error), scan tetap berjalan: barang dikenali dari daftar di HP, pita kuning "Server tidak terjangkau" muncul, stok yang tampil adalah **perkiraan**. Jumlah keluar melebihi perkiraan stok hanya diberi peringatan; server memeriksa stok saat transaksi terkirim.
+- **Selesai** → layar "Tersimpan di HP". Transaksi dikirim otomatis (tiap 30 detik selama menu terbuka, dan saat aplikasi dibuka lagi) dengan waktu kejadian aslinya. Tombol **Kirim sekarang** di menu untuk mengirim manual.
+- Transaksi yang **ditolak server** (mis. stok ternyata tidak cukup) muncul di banner merah → **Lihat**: bereskan di web lalu **Kirim ulang**, atau **Hapus** bila sudah dicatat dengan cara lain.
+- Aman dikirim ulang: setiap transaksi membawa kunci unik, jadi tidak pernah tercatat dua kali. Antrean tetap tersimpan walau logout atau aplikasi ditutup; **jangan hapus data aplikasi** sebelum antrean kosong.
+- Aplikasi tetap masuk ke menu walau server tidak terjangkau saat dibuka (selama sesi login masih ada).
+
 ## Pasang di HP
 
 APK hasil build ada di `build/app/outputs/flutter-apk/app-release.apk`. Salin ke HP Android (kabel USB, Google Drive, dll.), buka file-nya, izinkan "Instal dari sumber tidak dikenal", lalu pasang. Saat pertama scan, izinkan akses kamera.
@@ -52,13 +61,15 @@ APK rilis ditandatangani dengan debug key bawaan Flutter — cukup untuk dipasan
 lib/main.dart                    Start aplikasi, cek sesi tersimpan
 lib/api.dart                     Klien API (cookie session, HTTPS + CA mkcert), model
 lib/session_store.dart           Alamat server & cookie di penyimpanan privat aplikasi
+lib/offline.dart                 Daftar barang & antrean offline di HP, kunci client_ref (UUID)
 lib/validators.dart              Aturan jumlah & no reservasi (sama dengan server)
 lib/screens/login_screen.dart    Login + alamat server
-lib/screens/home_screen.dart     Pilih IN / OUT
+lib/screens/home_screen.dart     Pilih IN / OUT, kirim antrean otomatis, banner antrean
+lib/screens/queue_screen.dart    Antrean: menunggu dikirim & ditolak server
 lib/screens/scan_screen.dart     Kamera (mobile_scanner), senter
 lib/screens/quantity_screen.dart Jumlah (keyboard angka; barang Kg boleh berkoma, maks. 3 desimal)
 lib/screens/reservation_screen.dart  No reservasi 7 angka (OUT)
-lib/screens/result_screen.dart   Kirim transaksi & ringkasan hasil
+lib/screens/result_screen.dart   Kirim transaksi (atau simpan di antrean) & ringkasan hasil
 ```
 
 ## Masalah umum

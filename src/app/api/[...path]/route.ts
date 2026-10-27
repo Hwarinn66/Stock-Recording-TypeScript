@@ -9,6 +9,14 @@ import * as stock from "@/services/transactions";
 import * as products from "@/services/products";
 import { listProducts, history, dashboard, csv } from "@/services/reports";
 import { mutateLookup } from "@/services/lookups";
+import { backupWorkbookBuffer } from "@/services/excel-backup";
+import {
+  emergencyTemplateBuffer,
+  importEmergency,
+  readEmergencyBook,
+} from "@/services/emergency";
+import { xlsxResponse } from "@/lib/excel";
+import { localDay } from "@/lib/time";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 type Context = { params: Promise<{ path: string[] }> };
@@ -41,6 +49,46 @@ async function handler(req: Request, { params }: Context) {
       return ok(user);
     const filter = () =>
       schemas.listSchema.parse(Object.fromEntries(url.searchParams));
+    // Daftar barang untuk disimpan di HP (scan saat server tidak terjangkau → antrean offline).
+    if (resource === "catalog" && !key && method === "GET")
+      return ok(await stock.scanCatalog());
+    // Cadangan Excel (stok + riwayat) untuk diunduh kapan saja.
+    if (resource === "backup" && key === "excel" && method === "GET")
+      return xlsxResponse(
+        await backupWorkbookBuffer(),
+        `stok-gudang-${localDay()}.xlsx`,
+      );
+    // Buku darurat Excel: unduh template, lalu unggah untuk pratinjau / simpan.
+    if (resource === "emergency" && key === "template" && method === "GET")
+      return xlsxResponse(
+        await emergencyTemplateBuffer(),
+        `buku-darurat-${localDay()}.xlsx`,
+      );
+    if (
+      resource === "emergency" &&
+      (key === "preview" || key === "apply") &&
+      method === "POST"
+    ) {
+      // Isi file .xlsx dikirim apa adanya (bukan JSON). Batas Vercel ±4,5 MB.
+      if (Number(req.headers.get("content-length") || 0) > 4000000)
+        throw new AppError(
+          "TOO_LARGE",
+          "File terlalu besar (maks. 4 MB).",
+          413,
+        );
+      const data = await req.arrayBuffer();
+      if (data.byteLength > 4000000)
+        throw new AppError(
+          "TOO_LARGE",
+          "File terlalu besar (maks. 4 MB).",
+          413,
+        );
+      const book = await readEmergencyBook(Buffer.from(data));
+      return ok(
+        await importEmergency(book, user, { apply: key === "apply" }),
+        key === "apply" ? "Buku darurat disimpan" : "Pratinjau buku darurat",
+      );
+    }
     // Aplikasi scanner HP: cek barang dari QR, lalu kirim jumlah (+ no reservasi untuk OUT).
     if (resource === "scan" && key && method === "GET") {
       const token = schemas.qrTokenSchema.parse(key);

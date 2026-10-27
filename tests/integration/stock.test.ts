@@ -19,6 +19,18 @@ import {
 import { history } from "../../src/services/reports";
 import { importProducts, readProductRows } from "../../src/services/product-import";
 import { listSchema } from "../../src/validators";
+import { randomUUID } from "node:crypto";
+import {
+  buildEmergencyTemplate,
+  emergencyCatalog,
+  emergencyRef,
+  importEmergency,
+  readEmergencyBook,
+} from "../../src/services/emergency";
+import { buildBackupWorkbook, loadBackupData } from "../../src/services/excel-backup";
+import { toBuffer } from "../../src/lib/excel";
+import { localDay, sqlDateTime, zonedToUtc } from "../../src/lib/time";
+import { excelDay, excelTime, fillBook, FIRST_ROW } from "../helpers/emergency-book";
 // Only run on a disposable database whose name ends in _test. Import schema first.
 if (!process.env.DB_NAME?.endsWith("_test"))
   throw new Error("Integration tests require DB_NAME ending in _test");
@@ -647,4 +659,189 @@ test("history 'Semua' lists every transaction type", async () => {
   assert.equal(all.total, total);
   const types = new Set(all.items.map((item) => item.transaction_type));
   for (const type of ["IN", "OUT", "ADJUSTMENT"]) assert.ok(types.has(type as "IN"), type);
+});
+
+test("HP: kiriman ulang dengan client_ref sama tidak dicatat dua kali", async (t) => {
+  const id = (
+    await createProduct({
+      sku: "IDEM-1",
+      name: "Barang uji kirim ulang",
+      unit: "PCS",
+      category_id: category,
+      rack_id: rack,
+      position_number: 71,
+    })
+  ).id;
+  const [{ qr_token }] = await rows<{ qr_token: string }>(
+    "SELECT qr_token FROM products WHERE id=?",
+    [id],
+  );
+  const stockOf = async () =>
+    (await rows<{ stock: number }>("SELECT stock FROM products WHERE id=?", [id]))[0].stock;
+  const count = async (ref: string) =>
+    (await rows<{ n: number }>("SELECT COUNT(*) n FROM stock_transactions WHERE client_ref=?", [ref]))[0].n;
+  await t.test("kirim ulang berurutan dijawab dengan transaksi yang sama", async () => {
+    const ref = randomUUID();
+    const first = await record({ qr_token, mode: "IN", quantity: 10, client_ref: ref }, user);
+    const again = await record({ qr_token, mode: "IN", quantity: 10, client_ref: ref }, user);
+    assert.equal(first.replayed, false);
+    assert.equal(again.replayed, true);
+    assert.equal(again.id, first.id);
+    assert.equal(again.transaction_number, first.transaction_number);
+    assert.equal(again.stock_after, 10);
+    assert.equal(await stockOf(), 10);
+    assert.equal(await count(ref), 1);
+  });
+  await t.test("lima kiriman bersamaan dengan kunci sama: satu transaksi", async () => {
+    const ref = randomUUID();
+    const results = await Promise.all(
+      Array.from({ length: 5 }, () =>
+        record({ qr_token, mode: "OUT", quantity: 3, reservation_number: "0012345", client_ref: ref }, user),
+      ),
+    );
+    assert.equal(new Set(results.map((r) => r.id)).size, 1);
+    assert.equal(await stockOf(), 7);
+    assert.equal(await count(ref), 1);
+  });
+  await t.test("kiriman ulang OUT setelah stok habis tetap dijawab berhasil", async () => {
+    const input = {
+      qr_token,
+      mode: "OUT" as const,
+      quantity: 7,
+      reservation_number: "1234567",
+      client_ref: randomUUID(),
+    };
+    await record(input, user);
+    const again = await record(input, user);
+    assert.equal(again.replayed, true);
+    assert.equal(await stockOf(), 0);
+  });
+  await t.test("antrean offline memakai waktu kejadian, bukan waktu terkirim", async () => {
+    const at = new Date(Date.now() - 26 * 3600000);
+    const r = await record(
+      { qr_token, mode: "IN", quantity: 2, client_ref: randomUUID(), recorded_at: at.toISOString() },
+      user,
+    );
+    const [tx] = await rows<{ scanned_at: string; approved_at: string; notes: string }>(
+      "SELECT scanned_at,approved_at,notes FROM stock_transactions WHERE id=?",
+      [r.id],
+    );
+    assert.equal(tx.scanned_at.slice(0, 19), sqlDateTime(at));
+    assert.equal(tx.approved_at.slice(0, 19), sqlDateTime(at));
+    assert.match(tx.notes, /antrean offline/);
+    assert.ok(r.transaction_number.includes(localDay(at).replaceAll("-", "")));
+    assert.equal(await stockOf(), 2);
+  });
+  await t.test("waktu HP tidak wajar ditolak", async () => {
+    for (const at of [new Date(Date.now() - 8 * 86400000), new Date(Date.now() + 3600000)])
+      await assert.rejects(
+        record({ qr_token, mode: "IN", quantity: 1, client_ref: randomUUID(), recorded_at: at.toISOString() }, user),
+        { code: "INVALID_TIME" },
+      );
+    assert.equal(await stockOf(), 2);
+  });
+});
+
+test("buku darurat Excel: pratinjau, simpan, unggah ulang aman", async (t) => {
+  const make = async (sku: string, unit: string, position: number, stock: number) => {
+    const id = (
+      await createProduct({ sku, name: `Barang ${sku}`, unit, category_id: category, rack_id: rack, position_number: position })
+    ).id;
+    await adjustment({ product_id: id, expected_stock: 0, physical_stock: stock, notes: "stok awal tes darurat" }, user);
+    return id;
+  };
+  const pcs = await make("DRT-PCS", "PCS", 72, 20);
+  const kg = await make("DRT-KG", "Kg", 73, 10.5);
+  const stockOf = async (id: number) =>
+    (await rows<{ stock: number }>("SELECT stock FROM products WHERE id=?", [id]))[0].stock;
+  const total = async () =>
+    (await rows<{ n: number }>("SELECT COUNT(*) n FROM stock_transactions"))[0].n;
+  const admin = { id: user, username: "test" };
+  const day = localDay(new Date(Date.now() - 86400000)); // kemarin (zona aplikasi)
+  const file = await fillBook(await buildEmergencyTemplate(await emergencyCatalog()), [
+    { date: excelDay(day), time: excelTime(9, 0), type: "Masuk", sku: "DRT-PCS", quantity: 5, officer: "Budi" },
+    { date: excelDay(day), time: excelTime(9, 30), type: "Keluar", sku: "DRT-PCS", quantity: 8, reservation: "0012345", officer: "Budi", note: "produksi" },
+    { date: excelDay(day), time: excelTime(10, 0), type: "Keluar", sku: "DRT-KG", quantity: 0.25, reservation: "7654321" },
+    { date: excelDay(day), time: excelTime(10, 30), type: "Keluar", sku: "DRT-PCS", quantity: 100, reservation: "1111111" },
+    { date: excelDay(day), time: excelTime(11, 0), type: "Masuk", sku: "TIDAK-ADA", quantity: 1 },
+    // Baris ke-6 tapi jam paling awal: diproses lebih dulu.
+    { date: excelDay(day), time: excelTime(8, 0), type: "Keluar", sku: "DRT-PCS", quantity: 1, reservation: "2222222" },
+  ]);
+  const book = await readEmergencyBook(file);
+  await t.test("pratinjau menghitung urut waktu tanpa mengubah data", async () => {
+    const before = await total();
+    const preview = await importEmergency(book, admin, { apply: false });
+    assert.deepEqual(preview.summary, { total: 6, ready: 4, saved: 0, imported: 0, conflict: 0, error: 2 });
+    assert.deepEqual(
+      preview.rows.map((r) => [r.no, r.status, r.stock_before, r.stock_after]),
+      [
+        [1, "ready", 19, 24],
+        [2, "ready", 24, 16],
+        [3, "ready", 10.5, 10.25],
+        [4, "error", null, null],
+        [5, "error", null, null],
+        [6, "ready", 20, 19],
+      ],
+    );
+    assert.match(preview.rows[3].message, /Stok tidak mencukupi/);
+    assert.equal(preview.rows[4].message, "Kode barang tidak terdaftar di web.");
+    assert.equal(await stockOf(pcs), 20);
+    assert.equal(await total(), before);
+  });
+  await t.test("simpan: stok berubah, waktu & nomor transaksi sesuai kejadian", async () => {
+    const saved = await importEmergency(book, admin, { apply: true });
+    assert.equal(saved.summary.saved, 4);
+    assert.equal(saved.summary.error, 2);
+    assert.equal(await stockOf(pcs), 16);
+    assert.equal(await stockOf(kg), 10.25);
+    const [tx] = await rows<{
+      transaction_type: string;
+      quantity: number;
+      reservation_number: string;
+      scanned_at: string;
+      approved_at: string;
+      notes: string;
+      transaction_number: string;
+      stock_before: number;
+      stock_after: number;
+    }>("SELECT * FROM stock_transactions WHERE client_ref=?", [emergencyRef(book.bookId, 2)]);
+    const [y, m, d] = day.split("-").map(Number);
+    const at = sqlDateTime(zonedToUtc({ year: y, month: m, day: d, hour: 9, minute: 30, second: 0 }));
+    assert.deepEqual(
+      [tx.transaction_type, tx.quantity, tx.reservation_number, tx.stock_before, tx.stock_after],
+      ["OUT", 8, "0012345", 24, 16],
+    );
+    assert.equal(tx.scanned_at.slice(0, 19), at);
+    assert.equal(tx.approved_at.slice(0, 19), at);
+    assert.ok(tx.transaction_number.startsWith(`OUT-${day.replaceAll("-", "")}-`));
+    assert.equal(tx.notes, "Buku darurat No 2 · dicatat oleh Budi · catatan: produksi · diunggah oleh test");
+  });
+  await t.test("unggah ulang file yang sama tidak mencatat dua kali", async () => {
+    const before = await total();
+    const again = await importEmergency(await readEmergencyBook(file), admin, { apply: true });
+    assert.deepEqual(again.summary, { total: 6, ready: 0, saved: 0, imported: 4, conflict: 0, error: 2 });
+    assert.equal(await stockOf(pcs), 16);
+    assert.equal(await total(), before);
+  });
+  await t.test("baris tersimpan yang diubah ditandai isi berbeda, tidak dicatat lagi", async () => {
+    const edited = await fillBook(file, [{ quantity: 9 }], FIRST_ROW + 1);
+    const result = await importEmergency(await readEmergencyBook(edited), admin, { apply: true });
+    assert.equal(result.rows[1].status, "conflict");
+    assert.match(result.rows[1].message, /Revisi di menu Riwayat/);
+    assert.equal(await stockOf(pcs), 16);
+  });
+  await t.test("baris bermasalah diperbaiki lalu diunggah ulang: hanya baris itu tersimpan", async () => {
+    const fixed = await fillBook(file, [{ quantity: 10 }], FIRST_ROW + 3);
+    const result = await importEmergency(await readEmergencyBook(fixed), admin, { apply: true });
+    assert.deepEqual(result.summary, { total: 6, ready: 0, saved: 1, imported: 4, conflict: 0, error: 1 });
+    assert.equal(result.rows[3].status, "saved");
+    assert.equal(await stockOf(pcs), 6);
+  });
+  await t.test("cadangan Excel memuat stok & riwayat terbaru", async () => {
+    const data = await loadBackupData();
+    assert.equal(data.products.find((p) => p.sku === "DRT-PCS")?.stock, 6);
+    assert.equal(data.products.find((p) => p.sku === "DRT-KG")?.stock, 10.25);
+    assert.ok(data.history.some((h) => h.notes?.startsWith("Buku darurat No 2")));
+    assert.ok((await toBuffer(buildBackupWorkbook(data))).length > 5000);
+  });
 });

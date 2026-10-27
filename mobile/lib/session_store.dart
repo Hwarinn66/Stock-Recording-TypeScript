@@ -1,5 +1,7 @@
 import 'package:shared_preferences/shared_preferences.dart';
 
+import 'offline.dart';
+
 /// Menyimpan alamat server dan cookie login di penyimpanan privat aplikasi.
 class SessionStore {
   SessionStore(this._prefs);
@@ -8,6 +10,8 @@ class SessionStore {
       SessionStore(await SharedPreferences.getInstance());
 
   final SharedPreferences _prefs;
+  /// Daftar barang & antrean offline; tidak ikut terhapus saat logout.
+  late final offline = OfflineStore(_prefs);
 
   static const _serverKey = 'server_url';
   static const _userKey = 'username';

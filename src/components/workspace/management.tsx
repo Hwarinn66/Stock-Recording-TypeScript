@@ -16,6 +16,7 @@ import type {
   StockTransaction,
 } from "@/types";
 import { Heading, State, Badge, Pager, Tabs, useData } from "./shared";
+import { ExcelTools } from "./emergency";
 type HistoryType = "all" | "in" | "out" | "adjustments" | "reservations";
 export function HistoryPage({
   type,
@@ -801,7 +802,11 @@ export function SettingsPage() {
   return (
     <>
       <Heading title="Pengaturan" />
-      <h2 className="font-bold text-lg mb-4">Kategori barang</h2>
+      <h2 id="excel" className="font-bold text-lg mb-4 scroll-mt-20">
+        Excel cadangan &amp; buku darurat
+      </h2>
+      <ExcelTools />
+      <h2 className="font-bold text-lg mb-4 mt-10">Kategori barang</h2>
       <CategoryManager />
     </>
   );

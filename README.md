@@ -112,6 +112,31 @@ API POST/PATCH produk menerima `movement_class:"FAST"`, `"SLOW"`, `"DEAD"`, atau
 
 Pengujian `npm run test:reports` memastikan label manual terpisah dari OUT, termasuk Fast tanpa OUT, Slow dengan OUT tinggi, hapus label, urutan A–Z, CSV, serta kode unik varian kapasitas berdampingan.
 
+## Saat web error: cadangan Excel, buku darurat, antrean offline HP
+
+Tiga lapis cadangan. Arah datanya sengaja dibuat aman: Excel cadangan **hanya dibaca**, dan semua yang dicatat saat darurat masuk ke web sebagai **transaksi** (bukan angka stok). Dengan begitu, perubahan yang terjadi bersamaan tidak saling menimpa.
+
+**Wajib sekali setelah update ini:** backup database, lalu jalankan **`migrations/008_client_ref.sql`** di setiap database yang dipakai (Laragon dan/atau Aiven) **sebelum** source baru dijalankan/di-deploy. Migrasi hanya menambah kolom `stock_transactions.client_ref` (NULL) dan unique index; data lama tidak berubah. Tanpa migrasi ini transaksi dari HP akan gagal.
+
+### 1. Cadangan Excel otomatis di komputer
+
+Klik dua kali **`scripts\backup-excel.cmd`** (memakai `.env.aiven` bila ada, selain itu `.env.local`), atau jalankan `npm run excel:backup:cloud` / `npm run excel:backup`. Biarkan jendelanya terbuka. Program memeriksa database setiap 3 detik dan menulis ulang file bila ada perubahan:
+
+- **`Desktop\Backup Gudang\stok-gudang.xlsx`** berisi sheet *Stok Barang* (stok terakhir semua barang aktif), *Riwayat Transaksi* (90 hari terakhir), dan *Keterangan*. Kode barang & no reservasi disimpan sebagai teks (nol di depan tidak hilang), stok sebagai angka, tanggal & jam sebagai nilai tanggal/jam Excel dalam WIB. File diberi atribut read-only: Excel membukanya sebagai *Read-Only*, dan file tetap diperbarui walau sedang dibuka (tutup lalu buka lagi untuk melihat data terbaru).
+- **`Desktop\Backup Gudang\buku-darurat.xlsx`** dibuat sekali bila belum ada, dan tidak pernah ditimpa.
+
+Database dibaca langsung, jadi cadangan tetap berjalan walau website (Vercel) error. Opsi di `.env`: `EXCEL_BACKUP_DIR` (folder lain), `EXCEL_BACKUP_SECONDS`, `EXCEL_HISTORY_DAYS`. Agar otomatis jalan saat komputer menyala: Win+R → `shell:startup` → buat shortcut `scripts\backup-excel.cmd` di folder itu. Cadangan yang sama bisa diunduh kapan saja dari web: **Pengaturan → Unduh cadangan Excel**.
+
+### 2. Buku darurat Excel (bila web & HP tidak bisa dipakai)
+
+Petugas mengisi `buku-darurat.xlsx`, satu baris per barang masuk/keluar: Tanggal (**Ctrl+;**), Jam (**Ctrl+Shift+;**), Jenis (pilih Masuk/Keluar), Kode Barang, Jumlah, No Reservasi (wajib untuk Keluar), Petugas, Catatan. Nama Barang & Satuan terisi otomatis dari sheet *Daftar Barang*; kode salah ketik tampil "KODE TIDAK DITEMUKAN". Kolom otomatis dikunci, isian divalidasi Excel.
+
+Setelah web normal: **Pengaturan → Unggah buku darurat** → periksa pratinjau → **Simpan**. Baris diproses urut waktu kejadian dan diperiksa seperti transaksi HP (barang aktif, stok cukup, no reservasi). Tanggal/jam transaksi dan nomornya (mis. `OUT-20261025-…`) mengikuti waktu kejadian; catatan berisi nomor baris, petugas, dan pengunggah. Baris bermasalah dilewati dan dilaporkan, baris lain tetap tersimpan. File yang sama **boleh diunggah ulang**: baris yang sudah tersimpan dilewati, jadi setelah memperbaiki baris bermasalah cukup unggah ulang. Baris yang sudah tersimpan lalu diubah isinya ditandai *Isi berbeda* (perbaiki lewat Revisi di Riwayat), tidak dicatat dua kali. Jangan menyalin file buku untuk dipakai sebagai buku baru; unduh template baru (Pengaturan → Unduh template buku darurat).
+
+### 3. Antrean offline di aplikasi HP
+
+Aplikasi HP menyimpan daftar barang (diperbarui otomatis tiap 30 menit saat online). Bila server tidak terjangkau, QR tetap dikenali dari daftar itu dan transaksi disimpan di HP ("Tersimpan di HP"), lalu dikirim otomatis saat server bisa dihubungi lagi, lengkap dengan **waktu kejadian aslinya**. Menu utama HP menampilkan jumlah antrean dan transaksi yang ditolak server (mis. stok ternyata tidak cukup) untuk dicek, dikirim ulang, atau dihapus. Setiap transaksi HP membawa kunci unik (`client_ref`), sehingga sinyal yang putus setelah server menyimpan, atau antrean yang terkirim dua kali, tidak pernah mencatat transaksi ganda. Antrean menerima waktu kejadian maksimal 7 hari ke belakang.
+
 ## Persyaratan
 
 - Windows 10/11, Laragon dan MySQL **8.0.16+** atau MariaDB **10.6+**, engine InnoDB. Versi ini diperlukan untuk generated columns dan CHECK constraints.
@@ -253,7 +278,11 @@ Semua API berbasis JSON kecuali QR SVG, CSV dan SSE. Autentikasi menggunakan ses
 | POST         | `/api/auth/logout`                                                | logout session                                     |
 | GET          | `/api/auth/me`                                                    | user aktif                                         |
 | GET          | `/api/scan/:qr_token?mode=IN\|OUT`                                | cek barang hasil scan (aplikasi HP)                |
-| POST         | `/api/transactions`                                               | `{qr_token,mode,quantity,reservation_number?}`; OUT wajib no reservasi 7 angka; stok langsung berubah |
+| POST         | `/api/transactions`                                               | `{qr_token,mode,quantity,reservation_number?,client_ref?,recorded_at?}`; OUT wajib no reservasi 7 angka; stok langsung berubah. `client_ref` (UUID) sama = dijawab dengan transaksi yang sudah ada (`replayed:true`); `recorded_at` (ISO, maks. 7 hari lalu) untuk antrean offline |
+| GET          | `/api/catalog`                                                    | barang aktif + `qr_token` untuk disimpan di HP (scan offline) |
+| GET          | `/api/backup/excel`                                               | unduh cadangan Excel (stok + riwayat 90 hari)      |
+| GET          | `/api/emergency/template`                                         | unduh template buku darurat (.xlsx)                |
+| POST         | `/api/emergency/preview`, `/api/emergency/apply`                  | body = isi file .xlsx (maks. 4 MB); pratinjau / simpan buku darurat |
 | POST         | `/api/scan`                                                       | lama: `{qr_token,mode}` → transaksi PENDING        |
 | GET          | `/api/pending-transactions`                                       | daftar pending                                     |
 | PATCH        | `/api/transactions/:id/quantity`                                  | `{quantity}`                                       |

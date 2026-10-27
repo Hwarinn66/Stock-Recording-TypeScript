@@ -64,10 +64,13 @@ class _StartupScreenState extends State<StartupScreen> {
         await api.me();
         next = HomeScreen(api: api);
       } on ApiException catch (error) {
-        next = LoginScreen(
-          api: api,
-          notice: error.unauthorized ? 'Sesi berakhir. Silakan login lagi.' : error.message,
-        );
+        // Server tidak terjangkau: tetap ke menu agar scan offline (antrean di HP) bisa dipakai.
+        next = error.unavailable
+            ? HomeScreen(api: api)
+            : LoginScreen(
+                api: api,
+                notice: error.unauthorized ? 'Sesi berakhir. Silakan login lagi.' : error.message,
+              );
       }
     }
     if (!mounted) return;

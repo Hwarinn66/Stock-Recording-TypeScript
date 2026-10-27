@@ -1,6 +1,7 @@
 import { hierarchyJoins } from "./locations";
 import { z } from "zod";
 import { rows } from "@/lib/db";
+import { localDay, sqlDateTime, zonedToUtc } from "@/lib/time";
 import { listSchema, productListSchema } from "@/validators";
 import { productListSelect } from "./products";
 import { transactionSelect } from "./transactions";
@@ -106,34 +107,19 @@ export async function listProducts(f: z.infer<typeof productListSchema>) {
     limit: f.limit,
   };
 }
-// Date filters use the same configured timezone as display. Compute midnight offsets via Intl (including DST).
+// Date filters use the same configured timezone as display (midnight offsets via Intl, including DST).
 export function dateBoundary(day: string, next = false) {
-  const [y, m, d] = day.split("-").map(Number);
-  let target = Date.UTC(y, m - 1, d + (next ? 1 : 0));
-  let utc = target;
-  for (let n = 0; n < 3; n++) {
-    const parts = new Intl.DateTimeFormat("en-US", {
-      timeZone: process.env.APP_TIMEZONE || "Asia/Jakarta",
-      year: "numeric",
-      month: "2-digit",
-      day: "2-digit",
-      hour: "2-digit",
-      minute: "2-digit",
-      second: "2-digit",
-      hourCycle: "h23",
-    }).formatToParts(new Date(utc));
-    const get = (t: string) => Number(parts.find((p) => p.type === t)?.value);
-    const represented = Date.UTC(
-      get("year"),
-      get("month") - 1,
-      get("day"),
-      get("hour"),
-      get("minute"),
-      get("second"),
-    );
-    utc += target - represented;
-  }
-  return new Date(utc).toISOString().slice(0, 19).replace("T", " ");
+  const [year, month, date] = day.split("-").map(Number);
+  return sqlDateTime(
+    zonedToUtc({
+      year,
+      month,
+      day: date + (next ? 1 : 0),
+      hour: 0,
+      minute: 0,
+      second: 0,
+    }),
+  );
 }
 /** `type` null = semua jenis transaksi (tab "Semua" di halaman Riwayat). */
 export async function history(
@@ -196,12 +182,7 @@ export async function history(
   return { items, total, page: f.page, limit: f.limit };
 }
 export async function dashboard() {
-  const day = new Intl.DateTimeFormat("en-CA", {
-    timeZone: process.env.APP_TIMEZONE || "Asia/Jakarta",
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-  }).format(new Date());
+  const day = localDay();
   const from = dateBoundary(day),
     to = dateBoundary(day, true);
   const [products] = await rows(

@@ -40,6 +40,7 @@ export interface StockTransaction {
   cancelled_at: string | null;
   notes: string | null;
   reservation_number: string | null;
+  client_ref?: string | null;
   actor_name: string | null;
   name: string;
   sku: string;

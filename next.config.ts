@@ -28,7 +28,7 @@ const livePollSeconds =
 const config: NextConfig = {
   poweredByHeader: false,
   env: { LIVE_POLL_SECONDS: livePollSeconds },
-  serverExternalPackages: ["mysql2", "bcryptjs"],
+  serverExternalPackages: ["mysql2", "bcryptjs", "exceljs"],
   allowedDevOrigins: devOrigins(),
   async headers() {
     return [

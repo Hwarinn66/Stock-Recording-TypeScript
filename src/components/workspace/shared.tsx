@@ -107,7 +107,7 @@ export function State({
   return null;
 }
 // Label berbentuk pil dengan titik warna: hijau aman, kuning menipis, merah habis.
-const pill =
+export const pill =
   "inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 text-[10px] font-bold ring-1 ring-inset before:size-1.5 before:rounded-full before:bg-current before:content-['']";
 export function StockBadge({ stock }: { stock: number }) {
   const label = stockLabel(stock);

@@ -5,6 +5,7 @@ import 'dart:io';
 import 'package:http/http.dart' as http;
 import 'package:http/io_client.dart';
 
+import 'offline.dart';
 import 'session_store.dart';
 
 enum Mode {
@@ -23,6 +24,8 @@ class ApiException implements Exception {
   final String? code;
   final int status;
   bool get unauthorized => status == 401;
+  /// Server tidak terjangkau / sedang error: transaksi disimpan di HP (antrean offline).
+  bool get unavailable => status == 0 || status >= 500;
   @override
   String toString() => message;
 }
@@ -58,6 +61,16 @@ class Product {
 
   String get place =>
       roomName == null ? locationCode : '$roomName · $locationCode';
+
+  Map<String, Object?> toJson() => {
+    'id': id,
+    'sku': sku,
+    'name': name,
+    'unit': unit,
+    'stock': stock,
+    'location_code': locationCode,
+    'room_name': roomName,
+  };
 }
 
 class TransactionResult {
@@ -68,6 +81,7 @@ class TransactionResult {
     required this.stockAfter,
     required this.product,
     this.reservationNumber,
+    this.replayed = false,
   });
 
   factory TransactionResult.fromJson(Map<String, dynamic> json) =>
@@ -78,6 +92,7 @@ class TransactionResult {
         stockAfter: json['stock_after'] as num,
         reservationNumber: json['reservation_number'] as String?,
         product: Product.fromJson(json['product'] as Map<String, dynamic>),
+        replayed: json['replayed'] as bool? ?? false,
       );
 
   final String transactionNumber;
@@ -86,6 +101,8 @@ class TransactionResult {
   final num stockAfter;
   final String? reservationNumber;
   final Product product;
+  /// true = transaksi ini sudah tersimpan sebelumnya (kiriman ulang, tidak dicatat dua kali).
+  final bool replayed;
 }
 
 /// Klien HTTP yang mempercayai CA sistem + CA mkcert server gudang.
@@ -138,22 +155,93 @@ class ApiClient {
       'scan/${Uri.encodeComponent(token)}',
       query: {'mode': mode.code},
     );
-    return Product.fromJson(data as Map<String, dynamic>);
+    final product = Product.fromJson(data as Map<String, dynamic>);
+    await store.offline.rememberProduct(token, product);
+    return product;
   }
 
+  /// [clientRef] sama untuk kiriman ulang transaksi yang sama (tidak dicatat dua kali).
+  /// [recordedAt] hanya untuk antrean offline: waktu barang benar-benar masuk/keluar.
   Future<TransactionResult> record({
     required String token,
     required Mode mode,
     required num quantity,
     String? reservationNumber,
+    String? clientRef,
+    DateTime? recordedAt,
   }) async {
     final data = await _send('POST', 'transactions', body: {
       'qr_token': token,
       'mode': mode.code,
       'quantity': quantity,
       'reservation_number': ?reservationNumber,
+      'client_ref': ?clientRef,
+      'recorded_at': ?recordedAt?.toUtc().toIso8601String(),
     });
-    return TransactionResult.fromJson(data as Map<String, dynamic>);
+    final result = TransactionResult.fromJson(data as Map<String, dynamic>);
+    await store.offline.rememberProduct(token, result.product);
+    return result;
+  }
+
+  /// Daftar barang aktif (token QR → barang) untuk scan saat server tidak terjangkau.
+  Future<Map<String, Product>> catalog() async {
+    final data = await _send('GET', 'catalog') as List<dynamic>;
+    return {
+      for (final item in data.cast<Map<String, dynamic>>())
+        item['qr_token'] as String: Product.fromJson(item),
+    };
+  }
+
+  /// Perbarui daftar barang di HP bila sudah lebih dari [maxAge]. false = gagal (offline).
+  Future<bool> refreshCatalog({Duration maxAge = const Duration(minutes: 30)}) async {
+    final at = store.offline.catalogUpdatedAt;
+    if (at != null && DateTime.now().difference(at) < maxAge) return true;
+    try {
+      await store.offline.saveCatalog(await catalog());
+      return true;
+    } on ApiException {
+      return false;
+    }
+  }
+
+  bool _flushing = false;
+
+  /// Kirim antrean offline berurutan (yang lama dulu). Berhenti saat server belum
+  /// terjangkau atau sesi habis; yang ditolak server dipindah ke daftar "perlu dicek".
+  Future<FlushResult> flushQueue() async {
+    if (_flushing) return const FlushResult(stopped: 'busy');
+    _flushing = true;
+    var sent = 0;
+    var failed = 0;
+    try {
+      for (final item in store.offline.pending) {
+        try {
+          await record(
+            token: item.token,
+            mode: item.mode,
+            quantity: item.quantity,
+            reservationNumber: item.reservationNumber,
+            clientRef: item.clientRef,
+            recordedAt: item.recordedAt,
+          );
+          await store.offline.removePending(item.clientRef);
+          sent++;
+        } on ApiException catch (error) {
+          if (error.unauthorized) {
+            return FlushResult(sent: sent, failed: failed, stopped: 'login');
+          }
+          if (error.unavailable) {
+            await store.offline.recordAttempt(item.clientRef, error.message);
+            return FlushResult(sent: sent, failed: failed, stopped: 'offline');
+          }
+          await store.offline.moveToFailed(item, error.message);
+          failed++;
+        }
+      }
+      return FlushResult(sent: sent, failed: failed);
+    } finally {
+      _flushing = false;
+    }
   }
 
   Future<Object?> _send(

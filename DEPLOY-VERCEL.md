@@ -93,6 +93,25 @@ perubahan terbaru sudah di-commit dan di-push ke branch `main`. File `.env*` dan
 3. Mulai saat ini pakai **versi online saja**. Database di PC lokal tidak ikut berubah,
    jadi data keduanya akan berbeda.
 
+## Update yang membawa migrasi database
+
+Urutan wajib (contoh migrasi `008_client_ref.sql` untuk antrean offline HP & buku darurat):
+
+1. Backup Aiven (perintah di bawah).
+2. Jalankan migrasi **sekali** di Aiven, **sebelum** deploy:
+
+   ```powershell
+   $bin = "C:\laragon\bin\mysql\mysql-8.4.3-winx64\bin"
+   & "$bin\mysql.exe" -h HOST -P PORT -u avnadmin -p --ssl-mode=VERIFY_CA --ssl-ca=certificates\aiven-ca.pem --default-character-set=utf8mb4 warehouse_stock -e "SOURCE migrations/008_client_ref.sql"
+   ```
+
+3. Push ke GitHub → Vercel deploy otomatis.
+4. Pasang APK baru di HP (versi 1.1.0) untuk antrean offline.
+
+## Cadangan Excel di komputer gudang
+
+Jalankan `scripts\backup-excel.cmd` (memakai `.env.aiven`, membaca Aiven langsung, jadi tetap jalan walau Vercel error). Hasilnya di `Desktop\Backup Gudang`. Penjelasan lengkap: README → *Saat web error*. Program ini memakai 1 koneksi database dari kuota Aiven.
+
 ## Backup rutin (disarankan seminggu sekali)
 
 ```powershell

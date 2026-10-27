@@ -68,15 +68,18 @@ export async function execute(
   const [result] = await conn.execute<ResultSetHeader>(sql, sqlValues(params));
   return result;
 }
+/** `dryRun`: pemeriksaan & perhitungan tetap dijalankan, lalu semua perubahan dibatalkan (pratinjau). */
 export async function transaction<T>(
   fn: (conn: PoolConnection) => Promise<T>,
+  { dryRun = false } = {},
 ): Promise<T> {
   const conn = await db.getConnection();
   try {
     await conn.query("SET time_zone = '+00:00'");
     await conn.beginTransaction();
     const result = await fn(conn);
-    await conn.commit();
+    if (dryRun) await conn.rollback();
+    else await conn.commit();
     return result;
   } catch (error) {
     await conn.rollback();
@@ -91,6 +94,15 @@ export async function publish(conn: PoolConnection, type: string) {
     [type],
     conn,
   );
+}
+/** Penanda perubahan data (dashboard SSE & backup Excel): berubah setiap ada event baru. */
+export async function eventRevision() {
+  const [result] = await rows<{ version: number; count: number }>(
+    "SELECT COALESCE(MAX(id),0) version, COUNT(*) count FROM stock_events",
+  );
+  // AUTO_INCREMENT allocation order is not commit order: include COUNT
+  // so a late commit with a smaller ID still triggers a refresh.
+  return { ...result, revision: `${result.version}:${result.count}` };
 }
 
 function sqlValues(

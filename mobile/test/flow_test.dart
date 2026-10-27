@@ -159,6 +159,8 @@ void main() {
       'mode': 'OUT',
       'quantity': 5,
       'reservation_number': '0012345',
+      // Kunci pengiriman unik: kirim ulang tidak tercatat dua kali.
+      'client_ref': matches(RegExp(r'^[0-9a-f-]{36}$')),
     });
     expect(find.text('Transaksi berhasil'), findsOneWidget);
     expect(find.text('0012345'), findsOneWidget);

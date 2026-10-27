@@ -79,12 +79,14 @@ CREATE TABLE stock_transactions (
  status ENUM('PENDING','APPROVED','CANCELLED') NOT NULL DEFAULT 'PENDING', notes TEXT,
  -- Nomor reservasi 7 angka: identitas pengambilan & divisi untuk barang keluar.
  reservation_number CHAR(7) NULL,
+ -- Kunci pengiriman unik (UUID aplikasi HP / baris buku darurat): kirim ulang tidak tercatat dua kali.
+ client_ref VARCHAR(64) NULL,
  actor_id INT UNSIGNED NOT NULL,
  pending_product_id INT UNSIGNED GENERATED ALWAYS AS (CASE WHEN status='PENDING' THEN product_id ELSE NULL END) STORED,
  scanned_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3), approved_at DATETIME(3), cancelled_at DATETIME(3),
  created_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
  updated_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
- UNIQUE KEY uq_pending_product(pending_product_id),
+ UNIQUE KEY uq_pending_product(pending_product_id), UNIQUE KEY uq_client_ref(client_ref),
  FOREIGN KEY(product_id) REFERENCES products(id), FOREIGN KEY(location_id) REFERENCES locations(id),
  FOREIGN KEY(actor_id) REFERENCES users(id),
  CHECK (stock_before IS NULL OR stock_before >= 0), CHECK(stock_after IS NULL OR stock_after >= 0),

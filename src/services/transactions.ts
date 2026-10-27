@@ -2,6 +2,7 @@ import { hierarchyJoins, hierarchyFields } from "./locations";
 import type { PoolConnection } from "mysql2/promise";
 import { rows, execute, transaction, publish } from "@/lib/db";
 import { AppError } from "@/lib/errors";
+import { localDay, sqlDateTime } from "@/lib/time";
 import {
   MAX_QUANTITY,
   calculateStock,
@@ -12,8 +13,8 @@ import type { Product, StockTransaction } from "@/types";
 // Semua kolom barang kecuali image: foto base64 (hingga ±1,5 MB) hanya dibutuhkan halaman detail/edit.
 export const productColumns =
   "p.id,p.sku,p.name,p.category_id,p.unit,p.movement_class,p.stock,p.location_id,p.qr_token,p.description,p.active,p.created_at,p.updated_at";
-type LockedProduct = Omit<Product, "image" | "category_name">;
-const lockedSelect = `SELECT ${productColumns},l.code location_code,${hierarchyFields} FROM products p JOIN locations l ON l.id=p.location_id ${hierarchyJoins}`;
+export type LockedProduct = Omit<Product, "image" | "category_name">;
+export const lockedSelect = `SELECT ${productColumns},l.code location_code,${hierarchyFields} FROM products p JOIN locations l ON l.id=p.location_id ${hierarchyJoins}`;
 export async function lockProduct(id: number, conn: PoolConnection) {
   const [product] = await rows<LockedProduct>(
     lockedSelect + " WHERE p.id=? FOR UPDATE",
@@ -70,13 +71,12 @@ async function lockByToken(token: string, conn: PoolConnection) {
   await ensureUnlocked(p, conn);
   return p;
 }
-export async function nextNumber(type: string, conn: PoolConnection) {
-  const day = new Intl.DateTimeFormat("en-CA", {
-    timeZone: process.env.APP_TIMEZONE || "Asia/Jakarta",
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-  }).format(new Date());
+/** `day` (zona aplikasi) default hari ini; catatan buku darurat memakai tanggal kejadiannya. */
+export async function nextNumber(
+  type: string,
+  conn: PoolConnection,
+  day = localDay(),
+) {
   const kind = type === "ADJUSTMENT" ? "ADJ" : type;
   await execute(
     "INSERT INTO transaction_sequences(sequence_date,kind,last_number) VALUES (?,?,1) ON DUPLICATE KEY UPDATE last_number=last_number+1",
@@ -89,6 +89,15 @@ export async function nextNumber(type: string, conn: PoolConnection) {
     conn,
   );
   return `${kind}-${day.replaceAll("-", "")}-${String(sequence.last_number).padStart(4, "0")}`;
+}
+/**
+ * Daftar barang aktif untuk disimpan di HP: saat server tidak terjangkau, QR tetap
+ * dikenali dari daftar ini dan transaksi masuk antrean offline.
+ */
+export function scanCatalog() {
+  return rows(
+    `SELECT p.id,p.sku,p.name,p.unit,p.stock,p.qr_token,l.code location_code,rm.name room_name FROM products p JOIN locations l ON l.id=p.location_id${hierarchyJoins} WHERE p.active=1 ORDER BY p.id`,
+  );
 }
 // Aplikasi scanner HP: cek barang setelah QR dibaca, sebelum user mengisi jumlah.
 export async function lookup(token: string, mode: "IN" | "OUT") {
@@ -106,54 +115,115 @@ export async function lookup(token: string, mode: "IN" | "OUT") {
   if (mode === "OUT" && p.stock === 0) throw stockEmptyError(p);
   return p;
 }
+/** Transaksi HP yang sudah tersimpan dengan kunci pengiriman ini (dijawab ulang, bukan dicatat lagi). */
+async function recorded(ref: string) {
+  const [t] = await rows<StockTransaction>(
+    "SELECT * FROM stock_transactions WHERE client_ref=?",
+    [ref],
+  );
+  if (!t) return null;
+  const [product] = await rows<LockedProduct>(lockedSelect + " WHERE p.id=?", [
+    t.product_id,
+  ]);
+  return {
+    id: t.id,
+    transaction_number: t.transaction_number,
+    mode: t.transaction_type as "IN" | "OUT",
+    quantity: t.quantity as number,
+    stock_before: t.stock_before as number,
+    stock_after: t.stock_after as number,
+    reservation_number: t.reservation_number,
+    product,
+    replayed: true,
+  };
+}
 // Aplikasi scanner HP: transaksi langsung APPROVED dan stok langsung berubah.
+// `client_ref` (UUID dari HP) membuat kiriman ulang aman: sinyal putus setelah server
+// menyimpan, atau antrean offline yang terkirim dua kali, tidak mencatat transaksi kedua.
 export async function record(
   input: {
     qr_token: string;
     mode: "IN" | "OUT";
     quantity: number;
     reservation_number?: string;
+    client_ref?: string;
+    recorded_at?: string;
   },
   userId: number,
 ) {
-  return transaction(async (conn) => {
-    const p = await lockByToken(input.qr_token, conn);
-    const after = calculateStock(p.stock, input.quantity, input.mode, p.unit);
-    const number = await nextNumber(input.mode, conn);
-    await execute(
-      "UPDATE products SET stock=? WHERE id=?",
-      [after, p.id],
-      conn,
+  const ref = input.client_ref ?? null;
+  if (ref) {
+    const done = await recorded(ref);
+    if (done) return done;
+  }
+  const at = input.recorded_at ? new Date(input.recorded_at) : null;
+  if (
+    at &&
+    (at.getTime() > Date.now() + 5 * 60000 ||
+      at.getTime() < Date.now() - 7 * 86400000)
+  )
+    throw new AppError(
+      "INVALID_TIME",
+      "Waktu transaksi di HP tidak wajar (lebih dari 7 hari lalu atau di masa depan). Periksa jam HP, lalu catat lewat buku darurat/koreksi stok.",
     );
-    const result = await execute(
-      "INSERT INTO stock_transactions(transaction_number,product_id,location_id,location_code,room_name,transaction_type,quantity,stock_before,stock_after,status,reservation_number,approved_at,actor_id) VALUES (?,?,?,?,?,?,?,?,?,'APPROVED',?,UTC_TIMESTAMP(3),?)",
-      [
-        number,
-        p.id,
-        p.location_id,
-        p.location_code,
-        p.room_name,
+  try {
+    return await transaction(async (conn) => {
+      const p = await lockByToken(input.qr_token, conn);
+      const after = calculateStock(p.stock, input.quantity, input.mode, p.unit);
+      const number = await nextNumber(
         input.mode,
-        input.quantity,
-        p.stock,
-        after,
-        input.reservation_number ?? null,
-        userId,
-      ],
-      conn,
-    );
-    await publish(conn, "transaction");
-    return {
-      id: result.insertId,
-      transaction_number: number,
-      mode: input.mode,
-      quantity: input.quantity,
-      stock_before: p.stock,
-      stock_after: after,
-      reservation_number: input.reservation_number ?? null,
-      product: p,
-    };
-  });
+        conn,
+        localDay(at ?? new Date()),
+      );
+      const when = at ? sqlDateTime(at) : null;
+      await execute(
+        "UPDATE products SET stock=? WHERE id=?",
+        [after, p.id],
+        conn,
+      );
+      const result = await execute(
+        "INSERT INTO stock_transactions(transaction_number,product_id,location_id,location_code,room_name,transaction_type,quantity,stock_before,stock_after,status,reservation_number,client_ref,notes,scanned_at,approved_at,actor_id) VALUES (?,?,?,?,?,?,?,?,?,'APPROVED',?,?,?,COALESCE(?,UTC_TIMESTAMP(3)),COALESCE(?,UTC_TIMESTAMP(3)),?)",
+        [
+          number,
+          p.id,
+          p.location_id,
+          p.location_code,
+          p.room_name,
+          input.mode,
+          input.quantity,
+          p.stock,
+          after,
+          input.reservation_number ?? null,
+          ref,
+          at ? "Dikirim dari antrean offline HP" : null,
+          when,
+          when,
+          userId,
+        ],
+        conn,
+      );
+      await publish(conn, "transaction");
+      return {
+        id: result.insertId,
+        transaction_number: number,
+        mode: input.mode,
+        quantity: input.quantity,
+        stock_before: p.stock,
+        stock_after: after,
+        reservation_number: input.reservation_number ?? null,
+        product: p,
+        replayed: false,
+      };
+    });
+  } catch (error) {
+    // Kiriman dengan kunci sama yang berjalan bersamaan sudah tersimpan lebih dulu:
+    // jawab dengan transaksi itu, bukan error duplikat/stok tidak cukup.
+    if (ref) {
+      const done = await recorded(ref);
+      if (done) return done;
+    }
+    throw error;
+  }
 }
 export async function scan(token: string, mode: "IN" | "OUT", userId: number) {
   return transaction(async (conn) => {

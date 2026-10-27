@@ -38,6 +38,10 @@ export const recordSchema = z
     mode: z.enum(["IN", "OUT"]),
     quantity: quantitySchema,
     reservation_number: reservationSchema.optional(),
+    // UUID dari HP per pengiriman; kiriman ulang dengan kunci sama tidak dicatat dua kali.
+    client_ref: z.string().uuid().optional(),
+    // Antrean offline HP: waktu barang benar-benar masuk/keluar (bukan waktu terkirim).
+    recorded_at: z.iso.datetime().optional(),
   })
   .strict()
   .superRefine((value, ctx) => {

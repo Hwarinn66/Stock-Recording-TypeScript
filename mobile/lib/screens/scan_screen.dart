@@ -122,29 +122,45 @@ class _ScanScreenState extends State<ScanScreen>
     try {
       final product = await widget.api.lookup(token, widget.mode);
       if (!mounted) return;
-      // Kamera menyala lagi lewat didPopNext saat layar ini terlihat kembali.
-      unawaited(
-        Navigator.of(context).push(
-          MaterialPageRoute<void>(
-            builder: (_) => QuantityScreen(
-              api: widget.api,
-              mode: widget.mode,
-              token: token,
-              product: product,
-            ),
-          ),
-        ),
-      );
+      _openQuantity(token, product);
     } on ApiException catch (error) {
       if (!mounted) return;
       if (error.unauthorized) {
         goToLogin(context, widget.api, 'Sesi berakhir. Silakan login lagi.');
         return;
       }
+      // Server tidak terjangkau: kenali barang dari daftar yang tersimpan di HP.
+      final cached = error.unavailable ? widget.api.store.offline.product(token) : null;
+      if (cached != null) {
+        _openQuantity(token, cached, offline: true);
+        return;
+      }
       unawaited(HapticFeedback.heavyImpact());
       // Tetap busy sampai user menekan "Scan ulang".
-      setState(() => _error = _friendly(error));
+      setState(
+        () => _error = error.unavailable
+            ? 'Server tidak terjangkau dan barang ini belum tersimpan di HP. '
+                  'Catat di buku darurat Excel, atau coba lagi saat sinyal kembali.'
+            : _friendly(error),
+      );
     }
+  }
+
+  void _openQuantity(String token, Product product, {bool offline = false}) {
+    // Kamera menyala lagi lewat didPopNext saat layar ini terlihat kembali.
+    unawaited(
+      Navigator.of(context).push(
+        MaterialPageRoute<void>(
+          builder: (_) => QuantityScreen(
+            api: widget.api,
+            mode: widget.mode,
+            token: token,
+            product: product,
+            offline: offline,
+          ),
+        ),
+      ),
+    );
   }
 
   String _friendly(ApiException error) => switch (error.code) {

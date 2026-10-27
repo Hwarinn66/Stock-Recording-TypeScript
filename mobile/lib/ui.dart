@@ -40,12 +40,50 @@ void showError(BuildContext context, String message) {
     );
 }
 
+/// Pita kuning "mode offline" di atas form jumlah/no reservasi.
+class OfflineNotice extends StatelessWidget {
+  const OfflineNotice({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: const Color(0xFFFEF3C7),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: const Color(0xFFFCD34D)),
+      ),
+      child: const Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Icon(Icons.cloud_off, color: Color(0xFFB45309)),
+          SizedBox(width: 10),
+          Expanded(
+            child: Text(
+              'Server tidak terjangkau. Transaksi disimpan di HP dan dikirim '
+              'otomatis saat server bisa dihubungi. Stok yang tampil adalah '
+              'perkiraan dari data terakhir di HP.',
+              style: TextStyle(color: Color(0xFF78350F)),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
 /// Ringkasan barang hasil scan: kode barang dicetak besar agar mudah dicocokkan.
 class ProductCard extends StatelessWidget {
-  const ProductCard({super.key, required this.product, this.footer});
+  const ProductCard({
+    super.key,
+    required this.product,
+    this.footer,
+    this.stockLabel = 'Stok saat ini',
+  });
 
   final Product product;
   final Widget? footer;
+  final String stockLabel;
 
   @override
   Widget build(BuildContext context) {
@@ -82,7 +120,7 @@ class ProductCard extends StatelessWidget {
                 const Icon(Icons.inventory_2_outlined, size: 18),
                 const SizedBox(width: 4),
                 Text(
-                  'Stok saat ini: ${formatQty(product.stock)} ${product.unit}',
+                  '$stockLabel: ${formatQty(product.stock)} ${product.unit}',
                   style: const TextStyle(fontWeight: FontWeight.w600),
                 ),
               ],

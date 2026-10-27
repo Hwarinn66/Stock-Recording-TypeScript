@@ -1,6 +1,6 @@
 import { cookies } from "next/headers";
 import { cookieName, requireUser, session } from "@/lib/auth";
-import { rows, execute } from "@/lib/db";
+import { execute, eventRevision } from "@/lib/db";
 import { errorResponse, ok } from "@/lib/errors";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -18,13 +18,9 @@ async function prune(version: number) {
     ]);
 }
 async function readRevision() {
-  const [result] = await rows<{ version: number; count: number }>(
-    "SELECT COALESCE(MAX(id),0) version, COUNT(*) count FROM stock_events",
-  );
+  const result = await eventRevision();
   await prune(result.version);
-  // AUTO_INCREMENT allocation order is not commit order: include COUNT
-  // so a late commit with a smaller ID still triggers a refresh.
-  return { ...result, revision: `${result.version}:${result.count}` };
+  return result;
 }
 export async function GET(req: Request) {
   try {

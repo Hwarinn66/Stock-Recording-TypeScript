@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import '../api.dart';
+import '../offline.dart';
 import '../ui.dart';
 import '../validators.dart';
 import 'quantity_screen.dart';
@@ -16,6 +17,7 @@ class ReservationScreen extends StatefulWidget {
     required this.token,
     required this.product,
     required this.quantity,
+    this.offline = false,
   });
 
   final ApiClient api;
@@ -23,6 +25,7 @@ class ReservationScreen extends StatefulWidget {
   final String token;
   final Product product;
   final num quantity;
+  final bool offline;
 
   @override
   State<ReservationScreen> createState() => _ReservationScreenState();
@@ -31,6 +34,8 @@ class ReservationScreen extends StatefulWidget {
 class _ReservationScreenState extends State<ReservationScreen> {
   final _form = GlobalKey<FormState>();
   final _reservation = TextEditingController();
+  // Satu kunci per transaksi: kirim ulang dari layar ini tidak tercatat dua kali.
+  final _clientRef = newClientRef();
   bool _busy = false;
 
   @override
@@ -47,8 +52,11 @@ class _ReservationScreenState extends State<ReservationScreen> {
       api: widget.api,
       mode: widget.mode,
       token: widget.token,
+      product: widget.product,
       quantity: widget.quantity,
       reservationNumber: _reservation.text,
+      clientRef: _clientRef,
+      offline: widget.offline,
     );
     if (mounted) setState(() => _busy = false);
   }
@@ -71,8 +79,10 @@ class _ReservationScreenState extends State<ReservationScreen> {
                 child: ListView(
                   padding: const EdgeInsets.all(20),
                   children: [
+                    if (widget.offline) ...[const OfflineNotice(), const SizedBox(height: 16)],
                     ProductCard(
                       product: product,
+                      stockLabel: widget.offline ? 'Stok terakhir di HP' : 'Stok saat ini',
                       footer: Text(
                         'Jumlah keluar: ${formatQty(widget.quantity)} ${product.unit}',
                         style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
