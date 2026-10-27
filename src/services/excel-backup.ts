@@ -78,7 +78,7 @@ export function stockChange(t: StockTransaction) {
   if (t.transaction_type === "OUT") return -t.quantity;
   return t.quantity; // IN positif; koreksi sudah bertanda (selisih)
 }
-const stockColumns: Column<BackupProduct & { no: number }>[] = [
+export const stockColumns: Column<BackupProduct & { no: number }>[] = [
   { header: "No", width: 6, kind: "integer", value: (p) => p.no },
   { header: "Kode Barang", width: 16, kind: "code", value: (p) => p.sku },
   { header: "Nama Barang", width: 46, kind: "text", value: (p) => p.name },
@@ -112,7 +112,7 @@ const stockColumns: Column<BackupProduct & { no: number }>[] = [
     value: (p) => p.last_transaction_at,
   },
 ];
-const historyColumns: Column<StockTransaction>[] = [
+export const historyColumns: Column<StockTransaction>[] = [
   {
     header: "No Transaksi",
     width: 20,

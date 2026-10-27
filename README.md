@@ -123,7 +123,10 @@ Tiga lapis cadangan. Arah datanya sengaja dibuat aman: Excel cadangan **hanya di
 Klik dua kali **`scripts\backup-excel.cmd`** (memakai `.env.aiven` bila ada, selain itu `.env.local`), atau jalankan `npm run excel:backup:cloud` / `npm run excel:backup`. Biarkan jendelanya terbuka. Program memeriksa database setiap 3 detik dan menulis ulang file bila ada perubahan:
 
 - **`Desktop\Backup Gudang\stok-gudang.xlsx`** berisi sheet *Stok Barang* (stok terakhir semua barang aktif), *Riwayat Transaksi* (90 hari terakhir), dan *Keterangan*. Kode barang & no reservasi disimpan sebagai teks (nol di depan tidak hilang), stok sebagai angka, tanggal & jam sebagai nilai tanggal/jam Excel dalam WIB. File diberi atribut read-only: Excel membukanya sebagai *Read-Only*, dan file tetap diperbarui walau sedang dibuka (tutup lalu buka lagi untuk melihat data terbaru).
+- **`Desktop\Backup Gudang\stok-gudang-live.xlsx`** (butuh Microsoft Excel) — **buka sekali dan biarkan terbuka**: angkanya berubah sendiri. Workbook ini mengambil data dari folder `_data` lewat Power Query (tipe kolom tetap); program meminta Excel me-refresh begitu ada transaksi, dan Excel juga me-refresh sendiri tiap 1 menit. Saat pertama dibuka, bila muncul bar kuning *SECURITY WARNING — External Data Connections have been disabled*, klik **Enable Content** sekali. Jangan hapus folder `_data`.
 - **`Desktop\Backup Gudang\buku-darurat.xlsx`** dibuat sekali bila belum ada, dan tidak pernah ditimpa.
+
+Program harus membaca database yang sama dengan tempat transaksi masuk: web online (Vercel) → `npm run excel:backup:cloud` / `scripts\backup-excel.cmd`; web lokal (Laragon) → `npm run excel:backup`. File yang diunduh dari web hanyalah potret sesaat dan tidak ikut berubah.
 
 Database dibaca langsung, jadi cadangan tetap berjalan walau website (Vercel) error. Opsi di `.env`: `EXCEL_BACKUP_DIR` (folder lain), `EXCEL_BACKUP_SECONDS`, `EXCEL_HISTORY_DAYS`. Agar otomatis jalan saat komputer menyala: Win+R → `shell:startup` → buat shortcut `scripts\backup-excel.cmd` di folder itu. Cadangan yang sama bisa diunduh kapan saja dari web: **Pengaturan → Unduh cadangan Excel**.
 

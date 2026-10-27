@@ -12,6 +12,7 @@ import {
   type CatalogProduct,
 } from "../src/services/emergency";
 import { toBuffer } from "../src/lib/excel";
+import { liveCsvFiles, liveWorkbookScript } from "../src/services/excel-live";
 import {
   excelDay,
   excelTime,
@@ -238,6 +239,44 @@ test("cadangan Excel: setiap kolom berisi tipe & nilai yang sesuai", async () =>
   assert.equal(cancelled["Stok Sebelum"].value, null);
   assert.equal(cancelled["Status"].value, "Dibatalkan");
   assert.equal(adj["Catatan"].value, "Rusak");
+});
+
+test("workbook live: CSV berisi nilai sesuai jenis kolom, Power Query memakai tipe tetap", () => {
+  const files = liveCsvFiles({
+    products,
+    history,
+    generatedAt: now,
+    since: new Date(now.getTime() - 90 * 86400000),
+    days: 90,
+  });
+  const [header, baut, kg] = files["stok.csv"]
+    .replace("\uFEFF", "")
+    .split("\r\n");
+  assert.equal(header.split(",")[1], '"Kode Barang"');
+  // Kode teks dikutip (nol di depan aman), stok angka polos, waktu WIB ISO.
+  assert.equal(
+    baut,
+    '1,"00123","BAUT M8","Sparepart","Ruangan 1","A.01.01",120,"Pcs","AMAN","Fast moving",2026-10-26 10:15:00',
+  );
+  assert.ok(kg.includes(",548.8,"));
+  const out = files["riwayat.csv"].split("\r\n")[1].split(",");
+  assert.deepEqual(out.slice(0, 3), [
+    '"OUT-20261026-0003"',
+    "2026-10-26",
+    "10:15:00",
+  ]);
+  assert.equal(out[8], "-5");
+  assert.ok(files["riwayat.csv"].includes('"0012345"'));
+  assert.equal(files["info.csv"].split("\r\n")[1], "2026-10-26 14:45:10,3,4");
+  const script = liveWorkbookScript("C:\\Backup Gudang");
+  assert.match(
+    script,
+    /File\.Contents\("C:\\Backup Gudang\\_data\\stok\.csv"\)/,
+  );
+  assert.match(script, /\{"Kode Barang", type text\}/);
+  assert.match(script, /\{"Stok", type number\}/);
+  assert.match(script, /\{"Tanggal", type date\}/);
+  assert.match(script, /RefreshPeriod = 1/);
 });
 
 const catalog: CatalogProduct[] = [

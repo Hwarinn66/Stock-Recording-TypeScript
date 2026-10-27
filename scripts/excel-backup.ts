@@ -6,7 +6,8 @@ import {
   unlinkSync,
   writeFileSync,
 } from "node:fs";
-import { homedir } from "node:os";
+import { spawn, spawnSync } from "node:child_process";
+import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { db, eventRevision } from "../src/lib/db";
 import { toBuffer } from "../src/lib/excel";
@@ -18,6 +19,13 @@ import {
   buildEmergencyTemplate,
   emergencyCatalog,
 } from "../src/services/emergency";
+import {
+  LIVE_DATA_DIR,
+  LIVE_FILE,
+  liveCsvFiles,
+  liveRefreshScript,
+  liveWorkbookScript,
+} from "../src/services/excel-live";
 
 // Cadangan Excel otomatis di komputer ini. Program memeriksa database setiap beberapa
 // detik; bila ada perubahan (barang masuk/keluar, edit barang, dst.) file
@@ -43,6 +51,8 @@ function defaultDir() {
 }
 const dir = process.env.EXCEL_BACKUP_DIR?.trim() || defaultDir();
 const backupFile = join(dir, "stok-gudang.xlsx");
+const liveFile = join(dir, LIVE_FILE);
+const liveDir = join(dir, LIVE_DATA_DIR);
 const emergencyFile = join(dir, "buku-darurat.xlsx");
 const interval =
   Math.max(2, Number(process.env.EXCEL_BACKUP_SECONDS) || 3) * 1000;
@@ -74,23 +84,83 @@ const locked = (error: unknown) =>
  * untuk diedit) tanpa mengunci file, sehingga tetap bisa diganti walau sedang dibuka.
  * Bila file dibuka dalam mode edit, Windows menolak penggantian; dicoba lagi berikutnya.
  */
-function replaceFile(file: string, data: Buffer) {
-  const temp = join(dir, `.~${process.pid}.tmp`);
+function replaceFile(file: string, data: Buffer | string, readOnly = true) {
+  const temp = `${file}.~${process.pid}.tmp`;
   writeFileSync(temp, data);
   try {
-    if (existsSync(file)) chmodSync(file, 0o666);
+    if (readOnly && existsSync(file)) chmodSync(file, 0o666);
     renameSync(temp, file);
   } catch (error) {
     if (existsSync(temp)) unlinkSync(temp);
     throw error;
   } finally {
-    if (existsSync(file)) chmodSync(file, 0o444);
+    if (readOnly && existsSync(file)) chmodSync(file, 0o444);
   }
 }
-async function writeBackup() {
-  const data = await loadBackupData();
-  replaceFile(backupFile, await toBuffer(buildBackupWorkbook(data)));
-  return data;
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+const powershell = (args: string[]) => [
+  "-NoProfile",
+  "-NonInteractive",
+  "-ExecutionPolicy",
+  "Bypass",
+  ...args,
+];
+const encoded = (script: string) =>
+  Buffer.from(script, "utf16le").toString("base64");
+let liveUnavailable = false;
+/**
+ * Workbook live: CSV di folder _data ditulis ulang, workbook dibuat sekali (butuh
+ * Microsoft Excel), lalu Excel yang sedang membukanya diminta refresh saat itu juga.
+ */
+async function writeLive(data: Awaited<ReturnType<typeof loadBackupData>>) {
+  mkdirSync(liveDir, { recursive: true });
+  for (const [name, content] of Object.entries(liveCsvFiles(data))) {
+    // Power Query bisa sedang membaca CSV: coba beberapa kali.
+    for (let attempt = 0; ; attempt++) {
+      try {
+        replaceFile(join(liveDir, name), content, false);
+        break;
+      } catch (error) {
+        if (!locked(error) || attempt >= 10) throw error;
+        await sleep(300);
+      }
+    }
+  }
+  if (process.platform !== "win32" || liveUnavailable) return;
+  if (!existsSync(liveFile)) {
+    log(
+      "Membuat stok-gudang-live.xlsx lewat Microsoft Excel (sekali saja)...",
+      true,
+    );
+    // BOM agar Windows PowerShell membaca path non-ASCII dengan benar.
+    const script = join(tmpdir(), `warehouse-live-${process.pid}.ps1`);
+    writeFileSync(script, "﻿" + liveWorkbookScript(dir));
+    const result = spawnSync("powershell.exe", powershell(["-File", script]), {
+      timeout: 180000,
+      windowsHide: true,
+      encoding: "utf8",
+    });
+    unlinkSync(script);
+    if (result.status !== 0 || !existsSync(liveFile)) {
+      liveUnavailable = true;
+      log(
+        `stok-gudang-live.xlsx tidak bisa dibuat (Microsoft Excel diperlukan): ${(result.stderr || result.error?.message || "").trim().split("\n")[0]}`,
+        true,
+      );
+      return;
+    }
+    log(`Dibuat: ${liveFile} — buka file ini, angkanya berubah sendiri.`, true);
+    return;
+  }
+  spawn(
+    "powershell.exe",
+    powershell(["-EncodedCommand", encoded(liveRefreshScript)]),
+    {
+      detached: true,
+      stdio: "ignore",
+      windowsHide: true,
+    },
+  ).unref();
 }
 /** Buku darurat dibuat sekali bila belum ada; file yang sudah diisi petugas tidak pernah ditimpa. */
 async function ensureEmergencyBook() {
@@ -103,6 +173,7 @@ async function ensureEmergencyBook() {
 }
 
 let last = "";
+let lastLive = "";
 let dirty = true;
 let writtenAt = 0;
 async function tick() {
@@ -112,8 +183,13 @@ async function tick() {
     if (dirty || Date.now() - writtenAt > heartbeat) {
       // Revisi dicatat sebelum data dibaca: perubahan di tengah pembacaan memicu tulis ulang berikutnya.
       last = revision;
+      const data = await loadBackupData();
+      if (revision !== lastLive) {
+        await writeLive(data);
+        lastLive = revision;
+      }
       try {
-        const data = await writeBackup();
+        replaceFile(backupFile, await toBuffer(buildBackupWorkbook(data)));
         dirty = false;
         writtenAt = Date.now();
         log(
