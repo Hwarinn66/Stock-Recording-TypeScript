@@ -156,6 +156,27 @@ Aplikasi HP menyimpan daftar barang (diperbarui otomatis tiap 30 menit saat onli
 - **Foto barang dihapus** dari web dan aplikasi HP. **`migrations/011_drop_product_image.sql`** membuang kolom `products.image`; jalankan **setelah** source baru aktif (source lama masih memakai kolom itu).
 - Butuh **`migrations/010_in_code.sql`** sekali. Setelah server baru aktif, transaksi IN dari aplikasi lama (tanpa kode) ditolak, jadi pasang APK 1.2.0 di semua HP bersamaan dengan deploy. Barang masuk lewat buku darurat Excel tidak memakai kode masuk.
 
+## Backup otomatis database online (GitHub Actions)
+
+Setiap hari pukul **01.00 WIB**, server GitHub menyalin seluruh database Aiven (laptop boleh mati), mengompres, lalu **mengenkripsi** salinannya (AES-256) dengan kata sandi Anda. Repo ini publik, sehingga tanpa kata sandi itu file backup tidak bisa dibaca siapa pun. Backup disimpan **30 hari** di tab **Actions → Backup database → (pilih run) → Artifacts**. Sebelum disimpan, workflow memastikan tabel inti ada, dump selesai sampai akhir, dan file terenkripsi bisa dibuka kembali dengan isi identik. Bila gagal, run berwarna merah dan GitHub mengirim email.
+
+**Pasang sekali:** GitHub → repo → **Settings → Secrets and variables → Actions → New repository secret**, buat 7 secret ini:
+
+| Nama secret | Isi |
+| --- | --- |
+| `DB_HOST`, `DB_PORT`, `DB_USER`, `DB_PASSWORD`, `DB_NAME` | sama dengan `.env.aiven` |
+| `DB_SSL_CA` | seluruh isi `certificates/aiven-ca.pem` (termasuk baris `-----BEGIN/END CERTIFICATE-----`) |
+| `BACKUP_PASSPHRASE` | kata sandi backup buatan Anda, minimal 16 karakter. **Simpan di tempat aman**: tanpa kata sandi ini backup tidak bisa dibuka, dan GitHub tidak bisa menampilkannya lagi. |
+
+Lalu buka **Actions → Backup database → Run workflow** untuk mencoba sekarang.
+
+**Memulihkan:**
+1. Unduh artifact (file `.zip`) dari run yang diinginkan.
+2. Di Git Bash, dari folder proyek: `bash scripts/decrypt-backup.sh ~/Downloads/warehouse_stock-YYYYMMDD-HHMM.sql.gz.gpg.zip` → ketik kata sandi → menghasilkan file `.sql`.
+3. Backup database yang sekarang dulu, lalu pulihkan ke database (lokal: `mysql.exe -uroot warehouse_stock < file.sql`; Aiven: perintah `mysql.exe ... --ssl-mode=VERIFY_CA` seperti di DEPLOY-VERCEL.md, dengan `warehouse_stock < file.sql`). Isi database tujuan diganti sesuai backup.
+
+**Catatan:** GitHub otomatis mematikan jadwal di repo publik bila repo tidak ada aktivitas (commit) selama **60 hari**; GitHub mengirim email peringatan sebelumnya, dan jadwal bisa diaktifkan lagi lewat tombol **Enable workflow** di tab Actions. Disarankan memakai akun database khusus baca-saja untuk `DB_USER` (izin `SELECT`, `SHOW VIEW`, `TRIGGER`, `LOCK TABLES`).
+
 ## Persyaratan
 
 - Windows 10/11, Laragon dan MySQL **8.0.16+** atau MariaDB **10.6+**, engine InnoDB. Versi ini diperlukan untuk generated columns dan CHECK constraints.

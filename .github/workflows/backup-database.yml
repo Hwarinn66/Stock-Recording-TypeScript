@@ -1,0 +1,90 @@
+# Backup harian database online (Aiven) — berjalan di server GitHub, laptop boleh mati.
+# Salinan lengkap database dikompres lalu DIENKRIPSI (AES-256) dengan kata sandi
+# BACKUP_PASSPHRASE, karena repo ini publik: tanpa kata sandi itu file tidak bisa dibaca.
+# Hasil: tab Actions → "Backup database" → pilih run → Artifacts (disimpan 30 hari).
+# Pulihkan: scripts/decrypt-backup.sh, lihat README bagian "Backup otomatis".
+name: Backup database
+
+on:
+  schedule:
+    - cron: "0 18 * * *" # setiap hari 01.00 WIB
+  workflow_dispatch: # tombol "Run workflow" untuk backup sekarang
+
+permissions:
+  contents: read
+
+concurrency:
+  group: backup-database
+  cancel-in-progress: false
+
+jobs:
+  backup:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      DB_HOST: ${{ secrets.DB_HOST }}
+      DB_PORT: ${{ secrets.DB_PORT }}
+      DB_USER: ${{ secrets.DB_USER }}
+      DB_NAME: ${{ secrets.DB_NAME }}
+      MYSQL_PWD: ${{ secrets.DB_PASSWORD }}
+      DB_SSL_CA: ${{ secrets.DB_SSL_CA }}
+      BACKUP_PASSPHRASE: ${{ secrets.BACKUP_PASSPHRASE }}
+    steps:
+      - name: Periksa secrets
+        run: |
+          missing=""
+          for name in DB_HOST DB_PORT DB_USER DB_NAME MYSQL_PWD DB_SSL_CA BACKUP_PASSPHRASE; do
+            [ -n "${!name}" ] || missing="$missing ${name/MYSQL_PWD/DB_PASSWORD}"
+          done
+          if [ -n "$missing" ]; then
+            echo "::error::Secrets belum diisi:$missing (Settings → Secrets and variables → Actions)."
+            exit 1
+          fi
+          if [ ${#BACKUP_PASSPHRASE} -lt 16 ]; then
+            echo "::error::BACKUP_PASSPHRASE minimal 16 karakter."
+            exit 1
+          fi
+
+      - name: Pasang mysqldump
+        run: |
+          command -v mysqldump || (sudo apt-get update -qq && sudo apt-get install -y -qq mysql-client)
+          mysqldump --version
+
+      - name: Salin database
+        run: |
+          umask 077
+          printf '%s\n' "$DB_SSL_CA" | sed 's/\\n/\n/g' > "$RUNNER_TEMP/ca.pem"
+          stamp=$(TZ=Asia/Jakarta date +%Y%m%d-%H%M)
+          echo "FILE=warehouse_stock-$stamp.sql.gz.gpg" >> "$GITHUB_ENV"
+          mysqldump -h "$DB_HOST" -P "$DB_PORT" -u "$DB_USER" \
+            --ssl-mode=VERIFY_CA --ssl-ca="$RUNNER_TEMP/ca.pem" \
+            --single-transaction --set-gtid-purged=OFF --no-tablespaces \
+            --default-character-set=utf8mb4 --result-file="$RUNNER_TEMP/backup.sql" "$DB_NAME"
+          # Pastikan salinan lengkap: tabel inti ada dan dump selesai sampai akhir.
+          for table in products stock_transactions users locations; do
+            grep -q "CREATE TABLE \`$table\`" "$RUNNER_TEMP/backup.sql" || { echo "::error::Tabel $table tidak ada di backup"; exit 1; }
+          done
+          tail -n 1 "$RUNNER_TEMP/backup.sql" | grep -q "Dump completed" || { echo "::error::Backup terpotong"; exit 1; }
+          mysql -h "$DB_HOST" -P "$DB_PORT" -u "$DB_USER" --ssl-mode=VERIFY_CA --ssl-ca="$RUNNER_TEMP/ca.pem" "$DB_NAME" -N -e \
+            "SELECT CONCAT('Barang: ',COUNT(*)) FROM products UNION ALL SELECT CONCAT('Transaksi: ',COUNT(*)) FROM stock_transactions"
+          ls -l "$RUNNER_TEMP/backup.sql"
+
+      - name: Kompres & enkripsi
+        run: |
+          mkdir -p "$RUNNER_TEMP/out"
+          gzip -9 -c "$RUNNER_TEMP/backup.sql" | gpg --batch --yes --symmetric --cipher-algo AES256 \
+            --pinentry-mode loopback --passphrase-fd 3 -o "$RUNNER_TEMP/out/$FILE" 3<<<"$BACKUP_PASSPHRASE"
+          # Uji: file terenkripsi bisa dibuka kembali dan isinya utuh.
+          gpg --batch --quiet --pinentry-mode loopback --passphrase-fd 3 -d "$RUNNER_TEMP/out/$FILE" 3<<<"$BACKUP_PASSPHRASE" \
+            | gunzip | cmp - "$RUNNER_TEMP/backup.sql"
+          rm -f "$RUNNER_TEMP/backup.sql" "$RUNNER_TEMP/ca.pem"
+          ls -l "$RUNNER_TEMP/out"
+
+      - name: Simpan backup (30 hari)
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.FILE }}
+          path: ${{ runner.temp }}/out/${{ env.FILE }}
+          retention-days: 30
+          compression-level: 0
+          if-no-files-found: error

@@ -112,7 +112,9 @@ Urutan wajib (contoh migrasi `008_client_ref.sql` untuk antrean offline HP & buk
 
 Jalankan `scripts\backup-excel.cmd` (memakai `.env.aiven`, membaca Aiven langsung, jadi tetap jalan walau Vercel error). Hasilnya di `Desktop\Backup Gudang`. Penjelasan lengkap: README → *Saat web error*. Program ini memakai 1 koneksi database dari kuota Aiven.
 
-## Backup rutin (disarankan seminggu sekali)
+## Backup rutin
+
+Backup harian otomatis berjalan lewat GitHub Actions (README → *Backup otomatis database online*). Backup manual di bawah tetap berguna sebelum migrasi atau perubahan besar.
 
 ```powershell
 $bin = "C:\laragon\bin\mysql\mysql-8.4.3-winx64\bin"
