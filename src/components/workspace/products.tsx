@@ -599,48 +599,24 @@ export function ProductForm({ id }: { id?: number }) {
     </>
   );
 }
-const escapeHtml = (text: string) =>
-  text.replace(
-    /[&<>"']/g,
-    (c) =>
-      ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[
-        c
-      ]!,
-  );
 /**
- * Label QR 35 x 35 mm: hanya QR dan kode barang. Dicetak dari jendela terpisah
- * agar ukuran kertas (@page) tidak memengaruhi halaman lain.
+ * Label QR 35 x 35 mm (PDF dari server: hanya QR + kode barang, tanpa header/footer
+ * browser). Dicetak lewat iframe tersembunyi; bila browser menolak, PDF dibuka di tab baru.
  */
-function printLabel(qrUrl: string, sku: string) {
-  const w = window.open("", "_blank", "width=420,height=420");
-  if (!w) {
-    toast.error("Jendela cetak diblokir browser. Izinkan pop-up lalu coba lagi.");
-    return;
-  }
-  const src = new URL(qrUrl, window.location.href).href;
-  w.document.write(`<!doctype html><html><head><meta charset="utf-8"><title>${escapeHtml(sku)}</title><style>
-@page { size: 35mm 35mm; margin: 0; }
-* { box-sizing: border-box; }
-html, body { margin: 0; padding: 0; background: #fff; }
-.label { width: 35mm; height: 35mm; display: flex; flex-direction: column; align-items: center; justify-content: center; overflow: hidden; break-inside: avoid; }
-.label img { width: 28mm; height: 28mm; display: block; }
-.label p { margin: 0.4mm 0 0; font: 800 7.5pt/1 ui-monospace, Consolas, monospace; letter-spacing: 0.02em; color: #000; white-space: nowrap; max-width: 33mm; overflow: hidden; text-overflow: ellipsis; }
-</style></head><body><div class="label"><img id="qr" src="${escapeHtml(src)}" alt="QR"><p>${escapeHtml(sku)}</p></div></body></html>`);
-  w.document.close();
-  const img = w.document.getElementById("qr") as HTMLImageElement;
-  const go = () => {
-    w.focus();
-    w.print();
-    w.close();
+function printLabel(url: string) {
+  const frame = document.createElement("iframe");
+  frame.style.cssText = "position:fixed;width:0;height:0;border:0;right:0;bottom:0";
+  frame.src = url;
+  frame.onload = () => {
+    try {
+      frame.contentWindow!.focus();
+      frame.contentWindow!.print();
+    } catch {
+      window.open(url, "_blank");
+    }
+    setTimeout(() => frame.remove(), 60000);
   };
-  if (img.complete) go();
-  else {
-    img.onload = go;
-    img.onerror = () => {
-      w.close();
-      toast.error("QR gagal dimuat untuk dicetak.");
-    };
-  }
+  document.body.appendChild(frame);
 }
 export function ProductDetail({
   id,
@@ -703,9 +679,18 @@ export function ProductDetail({
             WAREHOUSE · SCAN UNTUK IN / OUT
           </p>
           <div className="no-print flex flex-wrap gap-2 mt-5 justify-center">
-            <Button variant="outline" onClick={() => printLabel(src, p.sku)}>
+            <Button
+              variant="outline"
+              onClick={() => printLabel(`/api/products/${id}/label?v=${rev}`)}
+            >
               <Printer />
               Print label (3,5 × 3,5 cm)
+            </Button>
+            <Button asChild variant="outline">
+              <a href={`/api/products/${id}/label?v=${rev}`} target="_blank">
+                <Download />
+                PDF label
+              </a>
             </Button>
             <Button asChild variant="outline">
               <a href={src} download={`${p.sku}-qr.svg`}>

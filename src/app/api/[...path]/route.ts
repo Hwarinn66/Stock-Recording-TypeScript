@@ -1,6 +1,7 @@
 import { listLocations, mutateLocation } from "@/services/locations";
 import { z } from "zod";
 import QRCode from "qrcode";
+import { labelPdf } from "@/lib/label-pdf";
 import { ok, errorResponse, AppError } from "@/lib/errors";
 import { checkOrigin, requireUser, login, logout } from "@/lib/auth";
 import { rows } from "@/lib/db";
@@ -231,6 +232,16 @@ async function handler(req: Request, { params }: Context) {
           "Barang berhasil dibuat",
         );
       const id = schemas.idSchema.parse(key);
+      if (action === "label" && method === "GET") {
+        const p = await products.getProduct(id);
+        return new Response(new Uint8Array(labelPdf(p.qr_token, p.sku)), {
+          headers: {
+            "Content-Type": "application/pdf",
+            "Content-Disposition": `inline; filename="label-${encodeURIComponent(p.sku)}.pdf"`,
+            "Cache-Control": "no-store",
+          },
+        });
+      }
       if (action === "qr" && method === "GET") {
         const p = await products.getProduct(id);
         return new Response(
