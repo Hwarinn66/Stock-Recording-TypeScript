@@ -4,7 +4,10 @@ import { db } from "../src/lib/db";
 import {
   decodeCsv,
   readProductRows,
+  readMinRows,
   importProducts,
+  importMinStock,
+  type MinRow,
   mapLegacyLocation,
   DEFAULT_ROOM,
   HOLDING_ROOM,
@@ -14,18 +17,22 @@ import {
 const usage = `Gunakan:
   npm run products:import -- --category=ATK file-atk.csv --category=Sparepart file-part.csv
 Opsi: --room="Ruangan 1" (ruangan untuk kode lokasi ERP, default ${DEFAULT_ROOM}).
-Tambahkan --apply untuk menyimpan. Tanpa --apply hanya pratinjau (database tidak diubah).`;
+Tambahkan --apply untuk menyimpan. Tanpa --apply hanya pratinjau (database tidak diubah).
+
+Hanya batas stok minimal (kolom min), stok & data lain tidak diubah:
+  npm run products:import -- --min-only file-atk.csv file-part.csv [--apply]`;
 
 const args = process.argv.slice(2);
 const apply = args.includes("--apply");
+const minOnly = args.includes("--min-only");
 const files: { path: string; category: string; room: string }[] = [];
 let category = "";
 let room = DEFAULT_ROOM;
 for (const arg of args) {
-  if (arg === "--apply") continue;
+  if (arg === "--apply" || arg === "--min-only") continue;
   if (arg.startsWith("--category=")) category = arg.slice("--category=".length).trim();
   else if (arg.startsWith("--room=")) room = arg.slice("--room=".length).trim() || DEFAULT_ROOM;
-  else if (!category) {
+  else if (!category && !minOnly) {
     console.error(`Tentukan --category=... sebelum file ${arg}.\n\n${usage}`);
     process.exit(1);
   } else files.push({ path: arg, category, room });
@@ -35,7 +42,41 @@ if (!files.length) {
   process.exit(1);
 }
 
+async function minOnlyImport() {
+  const items: MinRow[] = [];
+  const seen = new Map<string, string>();
+  for (const file of files) {
+    const name = basename(file.path);
+    const { items: rows, problems } = readMinRows(decodeCsv(readFileSync(file.path)));
+    console.log(`${name}: ${rows.length} batas minimal dibaca.`);
+    for (const problem of problems)
+      console.log(`  ! baris ${problem.line} ${problem.sku || "-"}: ${problem.reason} → dilewati`);
+    for (const row of rows) {
+      const key = row.sku.toUpperCase();
+      if (seen.has(key)) {
+        console.log(`  ! baris ${row.line} ${row.sku}: kode barang dobel (sudah ada di ${seen.get(key)}) → dilewati`);
+        continue;
+      }
+      seen.set(key, `${name} baris ${row.line}`);
+      items.push(row);
+    }
+  }
+  const summary = await importMinStock(items, apply);
+  console.log(`\n${apply ? "HASIL (batas minimal)" : "PRATINJAU batas minimal (belum disimpan)"}`);
+  console.log(`  Batas diubah           : ${summary.updated.length}`);
+  for (const item of summary.updated.slice(0, 30))
+    console.log(`        ${item.sku}  ${item.from} → ${item.to}`);
+  if (summary.updated.length > 30) console.log(`        … dan ${summary.updated.length - 30} lainnya`);
+  console.log(`  Sudah sama             : ${summary.unchanged}`);
+  console.log(`  Kode tidak ada di web  : ${summary.notFound.length}`);
+  if (summary.notFound.length) console.log(`        ${summary.notFound.join(", ")}`);
+  if (!apply) console.log("\nJalankan ulang dengan --apply untuk menyimpan.");
+}
+
 try {
+  if (minOnly) {
+    await minOnlyImport();
+  } else {
   const items: ImportRow[] = [];
   const seen = new Map<string, string>();
   for (const file of files) {
@@ -93,6 +134,7 @@ try {
     console.log(`  Stok berkoma (Kg, tanpa pembulatan): ${decimal.map((i) => `${i.sku}=${i.stock}`).join(", ")}`);
   if (noLocation) console.log(`  Tanpa kode lokasi      : ${noLocation} → ruangan "${HOLDING_ROOM}"`);
   if (!apply) console.log("\nJalankan ulang dengan --apply untuk menyimpan.");
+  }
 } catch (error) {
   console.error(error instanceof Error ? error.message : error);
   process.exitCode = 1;

@@ -62,13 +62,15 @@ CREATE TABLE products (
  name VARCHAR(255) NOT NULL, category_id INT UNSIGNED NOT NULL, unit VARCHAR(20) NOT NULL,
  movement_class ENUM('FAST','SLOW','DEAD') NULL DEFAULT NULL,
  -- DECIMAL: barang satuan Kg boleh berkoma; satuan lain dijaga bilangan bulat oleh aplikasi.
- stock DECIMAL(15,3) NOT NULL DEFAULT 0, location_id INT UNSIGNED NOT NULL,
+ stock DECIMAL(15,3) NOT NULL DEFAULT 0,
+ -- Batas stok minimal: stok <= min_stock = STOK MENIPIS (kolom MIN data gudang).
+ min_stock DECIMAL(15,3) NOT NULL DEFAULT 2, location_id INT UNSIGNED NOT NULL,
  qr_token CHAR(36) NOT NULL UNIQUE, description TEXT,
  active BOOLEAN NOT NULL DEFAULT 1,
  active_location_id INT UNSIGNED GENERATED ALWAYS AS (CASE WHEN active=1 THEN location_id ELSE NULL END) STORED,
  created_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
  updated_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
- UNIQUE KEY uq_active_location (active_location_id), CHECK(stock >= 0),
+ UNIQUE KEY uq_active_location (active_location_id), CHECK(stock >= 0), CONSTRAINT chk_products_min_stock CHECK(min_stock >= 0),
  FOREIGN KEY(category_id) REFERENCES categories(id), FOREIGN KEY(location_id) REFERENCES locations(id)
 ) ENGINE=InnoDB;
 CREATE TABLE transaction_sequences (

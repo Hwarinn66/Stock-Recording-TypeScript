@@ -829,7 +829,7 @@ test("Excel live dari web: kunci baca-saja, isi file, cabut akses", async () => 
   assert.equal((connections.match(/interval="1"/g) ?? []).length, 3);
   assert.equal((connections.match(/refreshOnLoad="1"/g) ?? []).length, 3);
   const workbook = await zip.file("xl/workbook.xml")!.async("string");
-  assert.match(workbook, /<definedName name="Stok" localSheetId="0">'Stok Barang'!\$A\$5:\$K\$\d+<\/definedName>/);
+  assert.match(workbook, /<definedName name="Stok" localSheetId="0">'Stok Barang'!\$A\$5:\$L\$\d+<\/definedName>/);
   assert.match(workbook, /<definedName name="Riwayat" localSheetId="1">'Riwayat Transaksi'!\$A\$4:\$Q\$\d+<\/definedName>/);
   assert.ok(zip.file("xl/queryTables/queryTable3.xml"));
   assert.match(await zip.file("[Content_Types].xml")!.async("string"), /queryTable3\.xml/);

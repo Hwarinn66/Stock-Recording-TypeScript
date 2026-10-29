@@ -6,6 +6,7 @@ import {
   parseCsv,
   parseMovement,
   readProductRows,
+  readMinRows,
 } from "../src/services/product-import";
 
 const header = "lokasi2,nobar,nabar,ukuran,satuan,category,stock_type,saldoawal,saldoakhir";
@@ -99,4 +100,23 @@ test("product rows: Kg keeps decimals exactly, other units must be whole", () =>
 
 test("missing required columns is reported clearly", () => {
   assert.throws(() => readProductRows("kode,nama\nA,B", "ATK"), /nobar, nabar, dan saldoakhir/);
+});
+
+test("min column becomes the low-stock threshold; min-only reader needs nobar+min", () => {
+  const { items, problems } = readProductRows(
+    [
+      "lokasi2,nobar,nabar,satuan,saldoakhir,min",
+      "A.01.01.001,PB1A00001,SEAL,Pcs,28,7",
+      "A.01.01.002,PB1A00002,SEAL,Pcs,3,",
+      "A.01.01.003,PB1A00003,SEAL,Pcs,3,-1",
+    ].join("\n"),
+    "Sparepart",
+  );
+  assert.deepEqual(items.map((i) => [i.sku, i.minStock]), [["PB1A00001", 7], ["PB1A00002", null]]);
+  assert.deepEqual(problems.map((p) => [p.line, p.reason]), [[4, "stok minimal negatif"]]);
+
+  const min = readMinRows("nobar,min\nSA1,10\nSA2,\nSA3,x\n,4\nSA5,0");
+  assert.deepEqual(min.items.map((i) => [i.sku, i.minStock]), [["SA1", 10], ["SA5", 0]]);
+  assert.deepEqual(min.problems.map((p) => p.reason), ["stok minimal kosong", "stok minimal bukan angka", "kode barang kosong"]);
+  assert.throws(() => readMinRows("nobar,saldoakhir\nA,1"), /nobar dan min/);
 });

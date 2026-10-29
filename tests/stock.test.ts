@@ -225,3 +225,12 @@ test("manual movement labels validate without automatic defaults", async () => {
   );
   assert.equal(productListSchema.parse({ sort: "dead" }).sort, "dead");
 });
+
+test("stock label uses the per-product minimum (default 2)", () => {
+  assert.equal(stockLabel(0, 10), "STOK HABIS");
+  assert.equal(stockLabel(10, 10), "STOK MENIPIS");
+  assert.equal(stockLabel(11, 10), "AMAN");
+  assert.equal(stockLabel(1, 0), "AMAN", "batas 0: hanya habis yang ditandai");
+  assert.equal(stockLabel(2), "STOK MENIPIS");
+  assert.equal(stockLabel(3), "AMAN");
+});

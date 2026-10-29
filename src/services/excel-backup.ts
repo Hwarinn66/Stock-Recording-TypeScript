@@ -28,6 +28,7 @@ export type BackupProduct = Pick<
   | "room_name"
   | "location_code"
   | "stock"
+  | "min_stock"
   | "unit"
   | "movement_class"
 > & { last_transaction_at: string | null };
@@ -43,7 +44,7 @@ export const historyDays = () =>
 /** Stok terakhir semua barang aktif, urut nama. */
 export function backupProducts() {
   return rows<BackupProduct>(
-    `SELECT p.sku,p.name,c.name category_name,rm.name room_name,l.code location_code,p.stock,p.unit,p.movement_class,lt.last_at last_transaction_at
+    `SELECT p.sku,p.name,c.name category_name,rm.name room_name,l.code location_code,p.stock,p.min_stock,p.unit,p.movement_class,lt.last_at last_transaction_at
      FROM products p JOIN categories c ON c.id=p.category_id JOIN locations l ON l.id=p.location_id${hierarchyJoins}
      LEFT JOIN (SELECT product_id,MAX(scanned_at) last_at FROM stock_transactions WHERE status='APPROVED' GROUP BY product_id) lt ON lt.product_id=p.id
      WHERE p.active=1 ORDER BY p.name,p.sku`,
@@ -88,6 +89,11 @@ export function stockChange(t: StockTransaction) {
   if (t.transaction_type === "OUT") return -t.quantity;
   return t.quantity; // IN positif; koreksi sudah bertanda (selisih)
 }
+const stockTone = {
+  "STOK HABIS": "bad",
+  "STOK MENIPIS": "warn",
+  AMAN: "good",
+} as const;
 export const stockColumns: Column<BackupProduct & { no: number }>[] = [
   { header: "No", width: 6, kind: "integer", value: (p) => p.no },
   { header: "Kode Barang", width: 16, kind: "code", value: (p) => p.sku },
@@ -101,13 +107,19 @@ export const stockColumns: Column<BackupProduct & { no: number }>[] = [
   { header: "Ruangan", width: 18, kind: "text", value: (p) => p.room_name },
   { header: "Lokasi", width: 16, kind: "code", value: (p) => p.location_code },
   { header: "Stok", width: 12, kind: "quantity", value: (p) => p.stock },
+  {
+    header: "Stok Minimal",
+    width: 13,
+    kind: "quantity",
+    value: (p) => p.min_stock,
+  },
   { header: "Satuan", width: 9, kind: "text", value: (p) => p.unit },
   {
     header: "Status Stok",
     width: 15,
     kind: "text",
-    value: (p) => stockLabel(p.stock),
-    tone: (p) => (p.stock === 0 ? "bad" : p.stock <= 2 ? "warn" : "good"),
+    value: (p) => stockLabel(p.stock, p.min_stock),
+    tone: (p) => stockTone[stockLabel(p.stock, p.min_stock)],
   },
   {
     header: "Pergerakan",
@@ -209,7 +221,7 @@ function writeNotes(ws: ExcelJS.Worksheet, data: BackupData, updated: string) {
     ],
     [
       "Status Stok",
-      "STOK HABIS = 0, STOK MENIPIS = sisa 2 atau kurang, AMAN = lebih dari 2.",
+      "STOK HABIS = 0, STOK MENIPIS = sisa sama dengan atau kurang dari Stok Minimal barang itu, AMAN = lebih dari Stok Minimal.",
     ],
     [
       "Pembaruan",

@@ -109,8 +109,15 @@ export function State({
 // Label berbentuk pil dengan titik warna: hijau aman, kuning menipis, merah habis.
 export const pill =
   "inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 text-[10px] font-bold ring-1 ring-inset before:size-1.5 before:rounded-full before:bg-current before:content-['']";
-export function StockBadge({ stock }: { stock: number }) {
-  const label = stockLabel(stock);
+export function StockBadge({
+  stock,
+  min,
+}: {
+  stock: number;
+  /** Batas stok minimal barang (kosong = 2). */
+  min?: number;
+}) {
+  const label = stockLabel(stock, min);
   return (
     <span
       className={`${pill} ${label === "STOK HABIS" ? "bg-red-50 text-red-700 ring-red-200" : label === "STOK MENIPIS" ? "bg-amber-50 text-amber-700 ring-amber-200" : "bg-emerald-50 text-emerald-700 ring-emerald-200"}`}

@@ -12,7 +12,7 @@ import {
 } from "@/lib/stock";
 import type { Product, StockTransaction } from "@/types";
 export const productColumns =
-  "p.id,p.sku,p.name,p.category_id,p.unit,p.movement_class,p.stock,p.location_id,p.qr_token,p.description,p.active,p.created_at,p.updated_at";
+  "p.id,p.sku,p.name,p.category_id,p.unit,p.movement_class,p.stock,p.min_stock,p.location_id,p.qr_token,p.description,p.active,p.created_at,p.updated_at";
 export type LockedProduct = Omit<Product, "category_name">;
 export const lockedSelect = `SELECT ${productColumns},l.code location_code,${hierarchyFields} FROM products p JOIN locations l ON l.id=p.location_id ${hierarchyJoins}`;
 export async function lockProduct(id: number, conn: PoolConnection) {
@@ -96,7 +96,7 @@ export async function nextNumber(
  */
 export function scanCatalog() {
   return rows(
-    `SELECT p.id,p.sku,p.name,p.unit,p.stock,p.qr_token,c.name category_name,l.code location_code,rm.name room_name FROM products p JOIN categories c ON c.id=p.category_id JOIN locations l ON l.id=p.location_id${hierarchyJoins} WHERE p.active=1 ORDER BY p.id`,
+    `SELECT p.id,p.sku,p.name,p.unit,p.stock,p.min_stock,p.qr_token,c.name category_name,l.code location_code,rm.name room_name FROM products p JOIN categories c ON c.id=p.category_id JOIN locations l ON l.id=p.location_id${hierarchyJoins} WHERE p.active=1 ORDER BY p.id`,
   );
 }
 /** Barang + nama kategori, untuk dibaca tanpa kunci (HP perlu kategori: ATK punya format Kode Masuk sendiri). */

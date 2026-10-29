@@ -7,6 +7,8 @@ export interface Product {
   movement_class: "FAST" | "SLOW" | "DEAD" | null;
   unit: string;
   stock: number;
+  /** Batas stok minimal: stok <= min_stock = STOK MENIPIS. */
+  min_stock: number;
   location_id: number;
   location_code: string;
   room_name: string | null;

@@ -62,6 +62,13 @@ export function correction(
     return { error: "Jumlah sama dengan stok di web.", same: true };
   return { after, delta: roundStock(after - stock) };
 }
-export function stockLabel(stock: number) {
-  return stock === 0 ? "STOK HABIS" : stock <= 2 ? "STOK MENIPIS" : "AMAN";
+/** Batas bawaan bila barang belum punya batas minimal sendiri (aturan lama). */
+export const DEFAULT_MIN_STOCK = 2;
+/** Menipis = stok sampai batas minimal barang itu (min_stock), habis = 0. */
+export function stockLabel(stock: number, minStock = DEFAULT_MIN_STOCK) {
+  return stock === 0
+    ? "STOK HABIS"
+    : stock <= minStock
+      ? "STOK MENIPIS"
+      : "AMAN";
 }

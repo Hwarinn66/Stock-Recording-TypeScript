@@ -53,7 +53,7 @@ Nama barang dari ERP bisa lebih dari 160 karakter: jalankan **`migrations/006_pr
 
 ### Impor barang dari CSV ekspor ERP
 
-Mengimpor **kode barang (`nobar`), nama (`nabar`), satuan (`satuan`), sisa stok (`saldoakhir`), lokasi (`lokasi2`), dan status pergerakan (`stock_type`)** tanpa histori:
+Mengimpor **kode barang (`nobar`), nama (`nabar`), satuan (`satuan`), sisa stok (`saldoakhir`), batas stok minimal (`min`), lokasi (`lokasi2`), dan status pergerakan (`stock_type`)** tanpa histori:
 
 ```powershell
 npm run products:import -- --category=ATK "C:\Users\...\POSISI1_atk.csv" --category=Sparepart "C:\Users\...\POSISI1_part.csv"
@@ -63,9 +63,18 @@ Tanpa `--apply` hanya pratinjau; tambahkan `--apply` untuk menyimpan (satu SQL t
 
 - **Lokasi:** kode ERP `AREA.rak.tingkat.urutan` (mis. `B.06.24.017`) menjadi Blok `B` / Rak `06` / posisi `24017`; kode aslinya disimpan apa adanya sehingga tampilan dan label sama dengan ERP. Kode non-standar (mis. `POLE FACTORY`) menjadi ruangan tersendiri. Dua barang dengan kode lokasi yang sama: barang kedua mendapat posisi `KODE (2)`. Barang tanpa kode lokasi masuk ruangan **Belum Ditempatkan**.
 - **Status pergerakan:** `FAST MOVING` → Fast, `SLOW MOVING` → Slow, `DEAD STOCK` → Dead stock.
+- **Stok minimal:** kolom `min` menjadi batas STOK MENIPIS barang itu. Bila kolom kosong/tidak ada, batas lama dipertahankan (barang baru: 2).
 - **Saldo:** Kg disimpan persis (mis. `1159.53`); saldo berkoma untuk satuan selain Kg dan saldo lebih dari 3 desimal dilaporkan lalu dilewati.
 
 Kode barang yang sudah ada diperbarui nama, satuan, stok, lokasi, dan labelnya (kategori tetap); barang dengan transaksi pending dilewati. Impor ulang file yang sama tidak membuat data dobel.
+
+**Hanya mengisi stok minimal** (stok, nama, lokasi, dan label tidak disentuh; aman walau stok di web sudah berbeda dari file):
+
+```powershell
+npm run products:import -- --min-only "C:\Users\...\POSISI1_atk.csv" "C:\Users\...\POSISI1_part.csv"
+```
+
+Cukup kolom `nobar` dan `min`. Tambahkan `--apply` untuk menyimpan. Untuk database online: `node --env-file=.env.aiven --import tsx scripts/import-products.ts --min-only ... --apply`.
 
 Untuk mencatat no reservasi, database yang sudah ada perlu **`migrations/005_reservation_number.sql` sekali** setelah backup. Migrasi ini hanya menambah kolom `stock_transactions.reservation_number` (NULL) dan index; data lama tidak berubah.
 
@@ -291,7 +300,7 @@ Lihat [Next.js CLI — HTTPS](https://nextjs.org/docs/app/api-reference/cli/next
 - **Dashboard**: setiap kotak angka bisa diklik dan membuka datanya (daftar barang, riwayat masuk/keluar/semua transaksi hari ini, tab stok menipis/habis, atau daftar transaksi menunggu).
 - **Riwayat**: satu menu dengan tab Semua, Barang masuk, Barang keluar, No reservasi, dan Koreksi stok. Filter tanggal juga bisa diisi lewat alamat, mis. `/history/in?from=2026-10-24&to=2026-10-24`. Semua status tersedia, filter tanggal berdasarkan `scanned_at` di timezone aplikasi. IN/OUT hari ini pada dashboard dihitung berdasarkan `approved_at`, hanya APPROVED. CSV mengekspor seluruh hasil filter, bukan hanya halaman saat ini. Waktu CSV adalah UTC dari database. Formula berbahaya pada CSV dinetralkan.
 - **Revisi transaksi**: di menu **Riwayat** (tab Barang masuk, Barang keluar, atau No reservasi) klik **nama barang** untuk memperbaiki jumlah dan/atau no reservasi (khusus barang keluar) yang salah input. Stok barang disesuaikan sebesar selisih jumlah (mis. keluar tercatat 5, sebenarnya 3 → stok naik 2) dan ditolak bila stok menjadi minus. Jejak revisi (waktu, user, perubahan, alasan) ditambahkan ke kolom Alasan. Transaksi pending, dibatalkan, dan koreksi stok tidak dapat direvisi. Stok sebelum/sesudah pada transaksi yang direvisi dihitung ulang dari stok sebelumnya; transaksi lain tidak diubah.
-- **Stok menipis / habis**: tab di halaman **Barang** (menipis = `<=2`, termasuk 0). **Kategori** dikelola di menu **Pengaturan**. Card dashboard memisahkan stok 1–2 dan stok 0.
+- **Stok menipis / habis**: tab di halaman **Barang**. Menipis = stok sama dengan atau kurang dari **Stok minimal** barang itu (termasuk 0); habis = 0. Stok minimal diisi di form Tambah/Edit Barang atau diimpor dari kolom `min` (lihat *Impor barang dari CSV*); barang tanpa batas sendiri memakai 2. Butuh **`migrations/012_min_stock.sql`** sekali, dijalankan **sebelum** source baru aktif. **Kategori** dikelola di menu **Pengaturan**. Card dashboard memisahkan stok menipis (di atas 0) dan stok 0.
 
 ## Konsistensi database dan keamanan
 

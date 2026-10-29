@@ -40,6 +40,7 @@ class Product {
     required this.unit,
     required this.stock,
     required this.locationCode,
+    this.minStock = 2,
     this.roomName,
     this.categoryName,
   });
@@ -50,6 +51,8 @@ class Product {
     name: json['name'] as String,
     unit: json['unit'] as String,
     stock: json['stock'] as num,
+    // Server lama / data cache lama tanpa min_stock: batas bawaan 2.
+    minStock: json['min_stock'] as num? ?? 2,
     locationCode: json['location_code'] as String,
     roomName: json['room_name'] as String?,
     categoryName: json['category_name'] as String?,
@@ -60,6 +63,9 @@ class Product {
   final String name;
   final String unit;
   final num stock;
+
+  /// Batas stok minimal barang: stok <= minStock = STOK MENIPIS.
+  final num minStock;
   final String locationCode;
   final String? roomName;
   final String? categoryName;
@@ -76,6 +82,7 @@ class Product {
     'name': name,
     'unit': unit,
     'stock': stock,
+    'min_stock': minStock,
     'location_code': locationCode,
     'room_name': roomName,
     'category_name': categoryName,

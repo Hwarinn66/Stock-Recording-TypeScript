@@ -72,6 +72,22 @@ Future<void> show(WidgetTester tester, Widget screen) async {
 }
 
 void main() {
+  test('Status stok memakai batas minimal per barang', () {
+    expect(ProductInfoScreen.stockStatus(0, 10), 'STOK HABIS');
+    expect(ProductInfoScreen.stockStatus(10, 10), 'STOK MENIPIS');
+    expect(ProductInfoScreen.stockStatus(11, 10), 'AMAN');
+    expect(ProductInfoScreen.stockStatus(2), 'STOK MENIPIS', reason: 'tanpa batas: 2');
+    expect(ProductInfoScreen.stockStatus(1, 0), 'AMAN');
+    final p = Product.fromJson({
+      'id': 1, 'sku': 'A', 'name': 'A', 'unit': 'Pcs', 'stock': 5,
+      'location_code': 'A.01', 'min_stock': 9,
+    });
+    expect(p.minStock, 9);
+    expect(Product.fromJson({...p.toJson()}).minStock, 9, reason: 'cache HP menyimpan batas');
+    final old = Product.fromJson({...p.toJson()}..remove('min_stock'));
+    expect(old.minStock, 2, reason: 'cache lama tanpa min_stock');
+  });
+
   test('productInfo memanggil endpoint detail & menyimpan barang untuk offline', () async {
     final store = await freshStore();
     late http.Request seen;

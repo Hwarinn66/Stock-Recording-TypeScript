@@ -49,7 +49,11 @@ export async function listProducts(f: z.infer<typeof productListSchema>) {
   }
   if (f.stock)
     where.push(
-      { low: "p.stock<=2", zero: "p.stock=0", safe: "p.stock>2" }[f.stock],
+      {
+        low: "p.stock<=p.min_stock",
+        zero: "p.stock=0",
+        safe: "p.stock>p.min_stock",
+      }[f.stock],
     );
   if (f.sort === "fast") {
     where.push("p.movement_class=?");
@@ -186,7 +190,7 @@ export async function dashboard() {
   const from = dateBoundary(day),
     to = dateBoundary(day, true);
   const [products] = await rows(
-    "SELECT COUNT(*) total_products,COALESCE(SUM(stock),0) total_stock,COALESCE(SUM(stock<=2 AND stock>0),0) low_stock,COALESCE(SUM(stock=0),0) zero_stock FROM products WHERE active=1",
+    "SELECT COUNT(*) total_products,COALESCE(SUM(stock),0) total_stock,COALESCE(SUM(stock<=min_stock AND stock>0),0) low_stock,COALESCE(SUM(stock=0),0) zero_stock FROM products WHERE active=1",
   );
   // Subquery terpisah agar masing-masing memakai index (approved_at, status, scanned_at)
   // dan tidak membaca seluruh histori setiap kali dashboard dimuat ulang.

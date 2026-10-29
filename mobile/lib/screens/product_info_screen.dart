@@ -17,8 +17,9 @@ class ProductInfoScreen extends StatelessWidget {
   final ProductInfo? info;
   final Product? cached;
 
-  static String stockStatus(num stock) =>
-      stock == 0 ? 'STOK HABIS' : (stock <= 2 ? 'STOK MENIPIS' : 'AMAN');
+  /// Menipis = stok sampai batas minimal barang itu, habis = 0.
+  static String stockStatus(num stock, [num minStock = 2]) =>
+      stock == 0 ? 'STOK HABIS' : (stock <= minStock ? 'STOK MENIPIS' : 'AMAN');
 
   static String movementLabel(String? m) => switch (m) {
     'FAST' => 'Fast moving',
@@ -32,7 +33,7 @@ class ProductInfoScreen extends StatelessWidget {
     final info = this.info;
     final p = info?.product ?? cached!;
     final theme = Theme.of(context);
-    final status = stockStatus(p.stock);
+    final status = stockStatus(p.stock, p.minStock);
     final statusColor = switch (status) {
       'STOK HABIS' => Colors.red.shade700,
       'STOK MENIPIS' => Colors.orange.shade800,
@@ -46,6 +47,7 @@ class ProductInfoScreen extends StatelessWidget {
     final rows = <(String, String)>[
       if (p.categoryName != null) ('Kategori', p.categoryName!),
       ('Satuan', p.unit),
+      ('Stok minimal', '${formatQty(p.minStock)} ${p.unit}'),
       ('Ruangan', p.roomName ?? '—'),
       ('Lokasi', p.locationCode),
       if (location.isNotEmpty) ('Blok / Rak', location),

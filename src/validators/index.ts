@@ -80,6 +80,13 @@ const productBaseSchema = z
     category_id: idSchema,
     unit: z.string().trim().min(1).max(20),
     movement_class: movementSchema.nullable().optional(),
+    // Batas stok minimal (stok <= nilai ini = STOK MENIPIS); kosong = 2.
+    min_stock: z
+      .number()
+      .min(0)
+      .max(2147483647)
+      .refine(threeDecimals, "Maksimal 3 angka di belakang koma.")
+      .optional(),
     // location_id dipertahankan untuk kompatibilitas API lama.
     location_id: idSchema.optional(),
     rack_id: idSchema.optional(),

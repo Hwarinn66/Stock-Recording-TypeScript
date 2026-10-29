@@ -7,6 +7,7 @@ import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import { rows, execute, transaction, publish } from "@/lib/db";
 import { AppError } from "@/lib/errors";
+import { DEFAULT_MIN_STOCK } from "@/lib/stock";
 import { productSchema, editProductSchema } from "@/validators";
 import type { Product } from "@/types";
 import { lockProduct, ensureUnlocked, productColumns } from "./transactions";
@@ -116,7 +117,7 @@ export async function createProduct(input: z.infer<typeof productSchema>) {
     await checkCategory(input.category_id, conn);
 
     const result = await execute(
-      "INSERT INTO products(sku,name,category_id,unit,location_id,qr_token,description,movement_class) VALUES (?,?,?,?,?,?,?,?)",
+      "INSERT INTO products(sku,name,category_id,unit,location_id,qr_token,description,movement_class,min_stock) VALUES (?,?,?,?,?,?,?,?,?)",
       [
         input.sku,
         input.name,
@@ -126,6 +127,7 @@ export async function createProduct(input: z.infer<typeof productSchema>) {
         randomUUID(),
         input.description ?? null,
         input.movement_class ?? null,
+        input.min_stock ?? DEFAULT_MIN_STOCK,
       ],
       conn,
     );
@@ -157,7 +159,7 @@ export async function editProduct(
     await checkCategory(updated.category_id, conn);
 
     await execute(
-      "UPDATE products SET name=?,category_id=?,unit=?,location_id=?,description=?,active=?,movement_class=? WHERE id=?",
+      "UPDATE products SET name=?,category_id=?,unit=?,location_id=?,description=?,active=?,movement_class=?,min_stock=? WHERE id=?",
       [
         updated.name,
         updated.category_id,
@@ -166,6 +168,7 @@ export async function editProduct(
         updated.description ?? null,
         updated.active ? 1 : 0,
         updated.movement_class ?? null,
+        updated.min_stock,
         id,
       ],
       conn,

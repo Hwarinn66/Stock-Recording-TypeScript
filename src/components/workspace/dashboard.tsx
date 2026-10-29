@@ -247,7 +247,7 @@ export function Dashboard() {
     { label: "Total Barang", key: "total_products", Icon: Package, href: "/products", note: "Buka daftar barang" },
     { label: "Barang Masuk Hari Ini", key: "incoming", Icon: ArrowDownToLine, href: "/history/in" + day, note: "Buka riwayat masuk hari ini" },
     { label: "Barang Keluar Hari Ini", key: "outgoing", Icon: ArrowUpFromLine, href: "/history/out" + day, note: "Buka riwayat keluar hari ini" },
-    { label: "Stock Menipis (1–2)", key: "low_stock", Icon: TriangleAlert, href: "/products?stock=low", note: "Buka barang stok menipis", alert: true },
+    { label: "Stock Menipis (≤ batas minimal)", key: "low_stock", Icon: TriangleAlert, href: "/products?stock=low", note: "Buka barang stok menipis", alert: true },
     { label: "Stock Habis", key: "zero_stock", Icon: PackageX, href: "/products?stock=zero", note: "Buka barang stok habis", alert: true },
     { label: "Transaksi Pending", key: "pending", Icon: Clock3, href: "#pending", note: "Lihat transaksi menunggu" },
     { label: "Transaksi Hari Ini", key: "today", Icon: ClipboardCheck, href: "/history" + day, note: "Buka semua transaksi hari ini" },
@@ -332,7 +332,7 @@ export function Dashboard() {
                   <span>
                     {p.sku} · {p.location_code}
                   </span>
-                  <StockBadge stock={p.stock} />
+                  <StockBadge stock={p.stock} min={p.min_stock} />
                 </div>
               </Link>
             ))}

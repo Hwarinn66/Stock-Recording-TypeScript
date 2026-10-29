@@ -1,11 +1,12 @@
 import { randomUUID } from "node:crypto";
 import type { PoolConnection } from "mysql2/promise";
 import { rows, execute, transaction, publish } from "@/lib/db";
-import { allowsDecimal, MAX_QUANTITY, roundStock, validAmount } from "@/lib/stock";
+import { allowsDecimal, DEFAULT_MIN_STOCK, MAX_QUANTITY, roundStock, validAmount } from "@/lib/stock";
 import { locationCode } from "./locations";
 
 // Impor master barang dari ekspor ERP (CSV): kode (nobar), nama (nabar), satuan,
-// sisa stok (saldoakhir), label pergerakan (stock_type) dan lokasi (lokasi2).
+// sisa stok (saldoakhir), batas stok minimal (min), label pergerakan (stock_type)
+// dan lokasi (lokasi2).
 // Tanpa histori transaksi.
 export const HOLDING_ROOM = "Belum Ditempatkan";
 export const HOLDING_BLOCK = "X";
@@ -22,6 +23,8 @@ export type ImportRow = {
   unit: string;
   stock: number;
   sourceStock: string;
+  /** Kolom min: batas STOK MENIPIS; null = kolom kosong/tidak ada (nilai lama dipakai). */
+  minStock: number | null;
   movement: Movement;
   legacyLocation: string | null;
   category: string;
@@ -85,6 +88,17 @@ export function parseCsv(text: string) {
   return result.filter((cells) => cells.some((cell) => cell.trim()));
 }
 
+/** Isi kolom min: angka >= 0 (maks. 3 desimal) → angka; kosong → null; salah → alasan. */
+export function parseMinStock(value: string): number | null | string {
+  if (value === "") return null;
+  const amount = Number(value);
+  if (!Number.isFinite(amount)) return "stok minimal bukan angka";
+  if (amount < 0) return "stok minimal negatif";
+  if (amount > MAX_QUANTITY) return "stok minimal terlalu besar";
+  if (!validAmount(amount, "Kg")) return "stok minimal lebih dari 3 angka di belakang koma";
+  return roundStock(amount);
+}
+
 /** FAST MOVING → FAST, SLOW MOVING → SLOW, DEAD STOCK → DEAD; lainnya tanpa label. */
 export function parseMovement(value: string): Movement {
   const text = value.trim().toUpperCase();
@@ -133,6 +147,7 @@ export function readProductRows(text: string, category: string, room = DEFAULT_R
   const unit = column("satuan");
   const place = column("lokasi2");
   const movement = column("stock_type");
+  const min = column("min");
   if (sku < 0 || name < 0 || stock < 0)
     throw new Error("Kolom wajib nobar, nabar, dan saldoakhir tidak ditemukan.");
 
@@ -154,7 +169,10 @@ export function readProductRows(text: string, category: string, room = DEFAULT_R
       room,
     };
     const amount = Number(row.sourceStock);
-    const reason = !row.sku
+    const minStock = parseMinStock(value(min));
+    const reason = typeof minStock === "string"
+      ? minStock
+      : !row.sku
       ? "kode barang kosong"
       : row.sku.length > 64
         ? "kode barang lebih dari 64 karakter"
@@ -177,9 +195,71 @@ export function readProductRows(text: string, category: string, room = DEFAULT_R
                       : null;
     if (reason) problems.push({ line, sku: row.sku, reason });
     // Tanpa pembulatan: roundStock hanya merapikan galat floating point.
-    else items.push({ ...row, stock: roundStock(amount) });
+    else items.push({ ...row, stock: roundStock(amount), minStock: minStock as number | null });
   });
   return { items, problems };
+}
+
+export type MinRow = { line: number; sku: string; minStock: number };
+
+/** Hanya kode barang (nobar) + batas minimal (min); kolom lain diabaikan. */
+export function readMinRows(text: string) {
+  const [header = [], ...data] = parseCsv(text);
+  const column = (name: string) =>
+    header.findIndex((cell) => cell.trim().toLowerCase() === name);
+  const sku = column("nobar");
+  const min = column("min");
+  if (sku < 0 || min < 0) throw new Error("Kolom wajib nobar dan min tidak ditemukan.");
+  const items: MinRow[] = [];
+  const problems: ImportProblem[] = [];
+  data.forEach((cells, index) => {
+    const line = index + 2;
+    const code = (cells[sku] ?? "").trim();
+    const minStock = parseMinStock((cells[min] ?? "").trim());
+    if (!code) problems.push({ line, sku: code, reason: "kode barang kosong" });
+    else if (minStock === null) problems.push({ line, sku: code, reason: "stok minimal kosong" });
+    else if (typeof minStock === "string") problems.push({ line, sku: code, reason: minStock });
+    else items.push({ line, sku: code, minStock });
+  });
+  return { items, problems };
+}
+
+export type MinSummary = {
+  updated: { sku: string; from: number; to: number }[];
+  unchanged: number;
+  notFound: string[];
+};
+
+/**
+ * Isi batas stok minimal saja (stok, nama, lokasi tidak disentuh), dicocokkan dengan kode barang.
+ * apply=false = pratinjau. Barang dengan transaksi pending tetap boleh (stok tidak berubah).
+ */
+export async function importMinStock(items: MinRow[], apply: boolean) {
+  const run = async (conn?: PoolConnection): Promise<MinSummary> => {
+    const summary: MinSummary = { updated: [], unchanged: 0, notFound: [] };
+    const found = new Map<string, { id: number; min_stock: number }>();
+    for (let i = 0; i < items.length; i += 500) {
+      const chunk = items.slice(i, i + 500).map((item) => item.sku);
+      const list = await rows<{ id: number; sku: string; min_stock: number }>(
+        `SELECT id,sku,min_stock FROM products WHERE sku IN (${chunk.map(() => "?").join(",")})${conn ? " FOR UPDATE" : ""}`,
+        chunk,
+        conn,
+      );
+      for (const p of list) found.set(p.sku.toUpperCase(), p);
+    }
+    for (const item of items) {
+      const product = found.get(item.sku.toUpperCase());
+      if (!product) summary.notFound.push(item.sku);
+      else if (product.min_stock === item.minStock) summary.unchanged++;
+      else {
+        summary.updated.push({ sku: item.sku, from: product.min_stock, to: item.minStock });
+        if (conn) await execute("UPDATE products SET min_stock=? WHERE id=?", [item.minStock, product.id], conn);
+      }
+    }
+    if (conn && summary.updated.length) await publish(conn, "product");
+    return summary;
+  };
+  return apply ? transaction(run) : run();
 }
 
 type Existing = {
@@ -188,6 +268,7 @@ type Existing = {
   name: string;
   unit: string;
   stock: number;
+  min_stock: number;
   movement_class: Movement;
   location_code: string;
   room_name: string;
@@ -199,7 +280,7 @@ async function existingProducts(skus: string[], conn?: PoolConnection) {
   for (let i = 0; i < skus.length; i += 500) {
     const chunk = skus.slice(i, i + 500);
     const list = await rows<Existing>(
-      `SELECT p.id,p.sku,p.name,p.unit,p.stock,p.movement_class,l.code location_code,rm.name room_name,(SELECT COUNT(*) FROM stock_transactions t WHERE t.product_id=p.id AND t.status='PENDING') pending FROM products p JOIN locations l ON l.id=p.location_id JOIN racks r ON r.id=l.rack_id JOIN blocks b ON b.id=r.block_id JOIN rooms rm ON rm.id=b.room_id WHERE p.sku IN (${chunk.map(() => "?").join(",")})${conn ? " FOR UPDATE" : ""}`,
+      `SELECT p.id,p.sku,p.name,p.unit,p.stock,p.min_stock,p.movement_class,l.code location_code,rm.name room_name,(SELECT COUNT(*) FROM stock_transactions t WHERE t.product_id=p.id AND t.status='PENDING') pending FROM products p JOIN locations l ON l.id=p.location_id JOIN racks r ON r.id=l.rack_id JOIN blocks b ON b.id=r.block_id JOIN rooms rm ON rm.id=b.room_id WHERE p.sku IN (${chunk.map(() => "?").join(",")})${conn ? " FOR UPDATE" : ""}`,
       chunk,
       conn,
     );
@@ -437,7 +518,8 @@ export async function importProducts(items: ImportRow[], apply: boolean) {
         const move = target !== null && !atTarget(found, target);
         const stockChanged = found.stock !== item.stock;
         const movementChanged = found.movement_class !== item.movement;
-        if (!move && !stockChanged && !movementChanged && found.name === item.name && found.unit === item.unit) {
+        const minStock = item.minStock ?? found.min_stock;
+        if (!move && !stockChanged && !movementChanged && minStock === found.min_stock && found.name === item.name && found.unit === item.unit) {
           summary.unchanged++;
           continue;
         }
@@ -453,8 +535,8 @@ export async function importProducts(items: ImportRow[], apply: boolean) {
           locationId = slot.id;
         }
         await execute(
-          `UPDATE products SET name=?,unit=?,stock=?,movement_class=?${locationId ? ",location_id=?" : ""} WHERE id=?`,
-          [item.name, item.unit, item.stock, item.movement, ...(locationId ? [locationId] : []), found.id],
+          `UPDATE products SET name=?,unit=?,stock=?,min_stock=?,movement_class=?${locationId ? ",location_id=?" : ""} WHERE id=?`,
+          [item.name, item.unit, item.stock, minStock, item.movement, ...(locationId ? [locationId] : []), found.id],
           conn,
         );
         continue;
@@ -479,8 +561,8 @@ export async function importProducts(items: ImportRow[], apply: boolean) {
         locationId = slot.id;
       } else locationId = await locator.holdingSlot(item.category);
       await execute(
-        "INSERT INTO products(sku,name,category_id,unit,stock,movement_class,location_id,qr_token) VALUES (?,?,?,?,?,?,?,?)",
-        [item.sku, item.name, category, item.unit, item.stock, item.movement, locationId, randomUUID()],
+        "INSERT INTO products(sku,name,category_id,unit,stock,min_stock,movement_class,location_id,qr_token) VALUES (?,?,?,?,?,?,?,?,?)",
+        [item.sku, item.name, category, item.unit, item.stock, item.minStock ?? DEFAULT_MIN_STOCK, item.movement, locationId, randomUUID()],
         conn,
       );
     }

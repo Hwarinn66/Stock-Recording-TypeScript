@@ -6,6 +6,7 @@ import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import { ArrowLeft, Download, Printer, QrCode, Plus } from "lucide-react";
 import { api, write, timestamp } from "@/lib/client";
+import { DEFAULT_MIN_STOCK } from "@/lib/stock";
 import { useLive } from "@/hooks/use-live";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
@@ -92,7 +93,7 @@ export function ProductsPage({ low = false }: { low?: boolean }) {
       <Tabs
         items={[
           ["", "Semua barang"],
-          ["low", "Stok menipis (≤ 2)"],
+          ["low", "Stok menipis (≤ batas minimal)"],
           ["zero", "Stok habis"],
         ].map(([value, label]) => ({
           key: value || "all",
@@ -163,7 +164,7 @@ export function ProductsPage({ low = false }: { low?: boolean }) {
             onChange={(e) => reset(() => setStock(e.target.value))}
           >
             <option value="">Semua stok</option>
-            <option value="low">Menipis ≤ 2</option>
+            <option value="low">Menipis ≤ batas minimal</option>
             <option value="zero">Habis</option>
             <option value="safe">Aman &gt; 2</option>
           </select>
@@ -253,7 +254,7 @@ export function ProductsPage({ low = false }: { low?: boolean }) {
                     </td>
                     <td className="text-xs">{p.category_name}</td>
                     <td
-                      className={`font-bold ${p.stock <= 2 ? "text-red-700" : ""}`}
+                      className={`font-bold ${p.stock <= p.min_stock ? "text-red-700" : ""}`}
                     >
                       {p.stock}
                     </td>
@@ -278,7 +279,7 @@ export function ProductsPage({ low = false }: { low?: boolean }) {
                     </td>
                     <td>
                       {p.active ? (
-                        <StockBadge stock={p.stock} />
+                        <StockBadge stock={p.stock} min={p.min_stock} />
                       ) : (
                         <span className="text-xs text-slate-400">NONAKTIF</span>
                       )}
@@ -392,6 +393,7 @@ export function ProductForm({ id }: { id?: number }) {
               category_id: Number(f.get("category_id")),
               unit: String(f.get("unit")),
               movement_class: f.get("movement_class") || null,
+              min_stock: Number(f.get("min_stock")),
               rack_id: Number(f.get("rack_id")),
               position_number: Number(f.get("position_number")),
               description: String(f.get("description")),
@@ -513,6 +515,22 @@ export function ProductForm({ id }: { id?: number }) {
                 </select>
                 <p className="text-xs text-slate-400 mt-2">
                   Pilih sesuai klasifikasi gudang Anda. Tidak dihitung dari OUT.
+                </p>
+              </div>
+              <div>
+                <label htmlFor="min_stock">Stok minimal</label>
+                <Input
+                  id="min_stock"
+                  name="min_stock"
+                  type="number"
+                  required
+                  min={0}
+                  step="any"
+                  defaultValue={initial?.min_stock ?? DEFAULT_MIN_STOCK}
+                />
+                <p className="text-xs text-slate-400 mt-2">
+                  Stok sama dengan atau kurang dari angka ini ditandai STOK
+                  MENIPIS.
                 </p>
               </div>
               <LocationPicker
@@ -685,7 +703,7 @@ export function ProductDetail({
             <div className="text-4xl font-bold mb-3">
               {p.stock} <span className="text-sm text-slate-400">{p.unit}</span>
             </div>
-            <StockBadge stock={p.stock} />
+            <StockBadge stock={p.stock} min={p.min_stock} />
             <dl className="mt-6 grid grid-cols-2 gap-4 text-sm">
               {[
                 ["Kategori", p.category_name],
@@ -693,6 +711,7 @@ export function ProductDetail({
                 ["Ruangan", p.room_name || "—"],
                 ["Lokasi", p.location_code],
                 ["Satuan", p.unit],
+                ["Stok minimal", `${p.min_stock} ${p.unit}`],
                 ["Kode Barang", p.sku],
                 ["Label pergerakan", movementLabel(p.movement_class)],
                 ["Dibuat", timestamp(p.created_at, settings.data?.timezone)],

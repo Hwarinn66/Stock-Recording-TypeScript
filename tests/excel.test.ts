@@ -31,6 +31,7 @@ const products = [
     room_name: "Ruangan 1",
     location_code: "A.01.01",
     stock: 120,
+    min_stock: 2,
     unit: "Pcs",
     movement_class: "FAST",
     last_transaction_at: "2026-10-26 03:15:00.000",
@@ -42,6 +43,7 @@ const products = [
     room_name: "Ruangan 1",
     location_code: "B.05.05.008",
     stock: 548.8,
+    min_stock: 600,
     unit: "Kg",
     movement_class: null,
     last_transaction_at: null,
@@ -53,6 +55,7 @@ const products = [
     room_name: "Ruangan 3",
     location_code: "C.12.04",
     stock: 0,
+    min_stock: 2,
     unit: "Roll",
     movement_class: "DEAD",
     last_transaction_at: null,
@@ -172,6 +175,7 @@ test("cadangan Excel: setiap kolom berisi tipe & nilai yang sesuai", async () =>
     "Ruangan",
     "Lokasi",
     "Stok",
+    "Stok Minimal",
     "Satuan",
     "Status Stok",
     "Pergerakan",
@@ -188,6 +192,9 @@ test("cadangan Excel: setiap kolom berisi tipe & nilai yang sesuai", async () =>
   assert.equal(kg["Stok"].numFmt, "#,##0.0##");
   assert.equal(baut["Status Stok"].value, "AMAN");
   assert.equal(kabel["Status Stok"].value, "STOK HABIS");
+  // Batas minimal per barang: 548,8 Kg dengan minimal 600 → menipis.
+  assert.equal(kg["Stok Minimal"].value, 600);
+  assert.equal(kg["Status Stok"].value, "STOK MENIPIS");
   assert.equal(baut["Pergerakan"].value, "Fast moving");
   assert.equal(kg["Pergerakan"].value, "Belum diberi label");
   assert.equal(kabel["Pergerakan"].value, "Dead stock");
@@ -257,7 +264,7 @@ test("workbook live: CSV berisi nilai sesuai jenis kolom, Power Query memakai ti
   // Kode teks dikutip (nol di depan aman), stok angka polos, waktu WIB ISO.
   assert.equal(
     baut,
-    '1,"00123","BAUT M8","Sparepart","Ruangan 1","A.01.01",120,"Pcs","AMAN","Fast moving",2026-10-26 10:15:00',
+    '1,"00123","BAUT M8","Sparepart","Ruangan 1","A.01.01",120,2,"Pcs","AMAN","Fast moving",2026-10-26 10:15:00',
   );
   assert.ok(kg.includes(",548.8,"));
   const out = files["riwayat.csv"].split("\r\n")[1].split(",");
