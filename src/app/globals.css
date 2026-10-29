@@ -141,18 +141,6 @@ input[type="number"] {
   .no-print {
     display: none !important;
   }
-  .print-label {
-    border: 2px solid black !important;
-    box-shadow: none !important;
-    width: 90mm;
-    margin: 0 auto;
-    break-inside: avoid;
-  }
-  .print-label img {
-    width: 65mm !important;
-    height: 65mm !important;
-    margin: auto;
-  }
   .print-only {
     display: block;
   }
