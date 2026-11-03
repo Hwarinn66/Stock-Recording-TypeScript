@@ -10,7 +10,10 @@ import * as stock from "@/services/transactions";
 import * as products from "@/services/products";
 import * as reservations from "@/services/reservations";
 import * as receipts from "@/services/receipts";
-import { listProducts, history, dashboard, csv } from "@/services/reports";
+import { listProducts, history, dashboard } from "@/services/reports";
+import * as excelExports from "@/services/exports";
+import { opname } from "@/services/opname";
+import { labelCandidates, labelsPdfFor } from "@/services/labels";
 import { mutateLookup } from "@/services/lookups";
 import { backupWorkbookBuffer } from "@/services/excel-backup";
 import {
@@ -269,6 +272,28 @@ async function handler(req: Request, { params }: Context) {
           "Transaksi direvisi",
         );
     }
+    // Print QR massal: daftar barang sesuai filter, lalu PDF label barang yang dicentang.
+    if (resource === "labels" && !key && method === "GET")
+      return ok(
+        await labelCandidates(
+          schemas.labelListSchema.parse(Object.fromEntries(url.searchParams)),
+        ),
+      );
+    if (resource === "labels" && key === "pdf" && method === "GET") {
+      const input = schemas.labelPdfSchema.parse(
+        Object.fromEntries(url.searchParams),
+      );
+      const { pdf, count } = await labelsPdfFor(input);
+      if (!count)
+        throw new AppError("NOT_FOUND", "Barang tidak ditemukan.", 404);
+      return new Response(new Uint8Array(pdf), {
+        headers: {
+          "Content-Type": "application/pdf",
+          "Content-Disposition": `inline; filename="label-qr-${count}-barang.pdf"`,
+          "Cache-Control": "no-store",
+        },
+      });
+    }
     if (resource === "products") {
       if (!key && method === "GET") {
         const f = schemas.productListSchema.parse(
@@ -276,24 +301,12 @@ async function handler(req: Request, { params }: Context) {
           ),
           result = await listProducts(f);
         return f.export
-          ? csv(
-              result.items.map((item) => ({
-                ...item,
-                kode_barang: item.sku,
-              })) as unknown as Record<string, unknown>[],
-              [
-                "kode_barang",
-                "name",
-                "category_name",
-                "stock",
-                "unit",
-                "location_code",
-                "room_name",
-                "active",
-                "out_total",
-                "movement_class",
-              ],
-              "barang",
+          ? xlsxResponse(
+              await excelExports.productsWorkbook(
+                result.items,
+                await excelExports.describeFilters(f),
+              ),
+              `data-barang-${localDay()}.xlsx`,
             )
           : ok(result);
       }
@@ -364,38 +377,38 @@ async function handler(req: Request, { params }: Context) {
                 ? "OUT"
                 : key.toUpperCase(),
         result = await history(type, f, reservations);
-      const columns = [
-        "transaction_number",
-        ...(key === "all" ? ["transaction_type"] : []),
-        "scanned_at",
-        "approved_at",
-        "cancelled_at",
-        "kode_barang",
-        "name",
-        "location_code",
-        "room_name",
-        "quantity",
-        "stock_before",
-        "stock_after",
-        "status",
-        "reservation_number",
-        "in_code",
-        "actor_name",
-        "notes",
-      ];
+      const files: Record<excelExports.HistoryKind, string> = {
+        all: "semua",
+        in: "masuk",
+        out: "keluar",
+        adjustments: "koreksi-stok",
+        reservations: "no-reservasi",
+      };
+      const kind = key as excelExports.HistoryKind;
       return f.export
-        ? csv(
-            result.items.map((item) => ({
-              ...item,
-              kode_barang: item.sku,
-            })) as unknown as Record<string, unknown>[],
-            reservations
-              ? [
-                  "reservation_number",
-                  ...columns.filter((c) => c !== "reservation_number"),
-                ]
-              : columns,
-            "riwayat-" + key,
+        ? xlsxResponse(
+            await excelExports.historyWorkbook(
+              kind,
+              result.items,
+              await excelExports.describeFilters(f),
+            ),
+            `riwayat-${files[kind]}-${localDay()}.xlsx`,
+          )
+        : ok(result);
+    }
+    // Opname harian: stok awal, masuk, keluar, koreksi, sisa per barang pada satu tanggal.
+    if (resource === "opname" && !key && method === "GET") {
+      const f = schemas.opnameSchema.parse(
+          Object.fromEntries(url.searchParams),
+        ),
+        result = await opname(f);
+      return f.export
+        ? xlsxResponse(
+            await excelExports.opnameWorkbook(result.date, result.items, [
+              f.all === "1" ? "semua barang aktif" : "barang yang ada transaksi",
+              ...(await excelExports.describeFilters(f)),
+            ]),
+            `opname-${result.date}.xlsx`,
           )
         : ok(result);
     }

@@ -191,28 +191,3 @@ export async function dashboard() {
   );
   return { ...products, ...trans };
 }
-export function csv(
-  items: Record<string, unknown>[],
-  columns: string[],
-  name: string,
-) {
-  const cell = (value: unknown) => {
-    let s = value == null ? "" : String(value);
-    // Angka (mis. selisih adjustment -5) aman; hanya teks berawalan formula yang di-escape.
-    if (typeof value !== "number" && /^[=+\-@\t\r]/.test(s)) s = "'" + s;
-    return '"' + s.replaceAll('"', '""') + '"';
-  };
-  const body =
-    "\uFEFF" +
-    [
-      columns.map(cell).join(","),
-      ...items.map((row) => columns.map((c) => cell(row[c])).join(",")),
-    ].join("\r\n");
-  return new Response(body, {
-    headers: {
-      "Content-Type": "text/csv; charset=utf-8",
-      "Content-Disposition": `attachment; filename="${name}.csv"`,
-      "Cache-Control": "no-store",
-    },
-  });
-}

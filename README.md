@@ -8,7 +8,7 @@ Untuk menjalankan secara online gratis (Vercel + database Aiven), ikuti [DEPLOY-
 
 Tambah barang → stok awal 0 + UUID QR otomatis → cetak label → buka aplikasi **Warehouse Scanner** di HP → IN: pilih ATK/bukan ATK, ketik **kode masuk** dan **total item** sekali → scan barang satu per satu → ketik jumlah → Selesai, sampai semua item masuk. OUT: ketik **no reservasi 7 angka** dan **total item** sekali → scan barang satu per satu → ketik jumlah → Selesai, sampai semua item terambil. Setiap scan langsung memperbarui stok dan histori lewat SQL transaction → dashboard menerima SSE. No reservasi adalah identitas pengambilan dan divisi pengambil; **Riwayat reservasi** di dashboard menampilkan satu baris per reservasi (klik untuk melihat barangnya), dan menu **Riwayat → No reservasi** menampilkan semua barang keluar satu per satu. Barang masuk sama: **Riwayat penerimaan** di dashboard satu baris per kode masuk, menu **Riwayat → Barang masuk** tetap satu per satu.
 
-Fitur: dashboard 7 indikator, master barang/kategori/ruangan/blok/rak/posisi, detail dan histori barang, regenerasi QR, label cetak, antrean multi-barang, adjustment stock opname dengan alasan, filter/search/sorting/pagination, CSV, soft disable barang, login server session, feedback suara/vibrasi HP. Semua data operasional berasal dari MySQL; browser tidak mengakses database.
+Fitur: dashboard 7 indikator, master barang/kategori/ruangan/blok/rak/posisi, detail dan histori barang, regenerasi QR, label cetak, antrean multi-barang, adjustment stock opname dengan alasan, opname harian, print QR massal, filter/search/sorting/pagination, unduhan Excel, soft disable barang, login server session, feedback suara/vibrasi HP. Semua data operasional berasal dari MySQL; browser tidak mengakses database.
 
 ## Lokasi bertingkat (v2)
 
@@ -89,7 +89,7 @@ Untuk database yang sudah memakai hierarki lokasi v2/v3, jalankan **`migrations/
 | a0001       | Ember 1 kg              | A.01.01       |
 | a0002       | Ember 1,2 kg            | A.01.02       |
 
-Isi kapasitas/ukuran pada nama barang. Kode ditampilkan sebagai kolom tersendiri di tabel, lebih besar pada label QR cetak, hasil scan HP dan transaksi pending. Cocokkan kode pada label posisi dan barang saat pengambilan, terutama untuk varian yang berdampingan. QR tetap token unik, bukan kode barang; pencarian mendukung kode dan nama. CSV produk/histori memakai header `kode_barang`; JSON API tetap memakai `sku` agar kompatibel.
+Isi kapasitas/ukuran pada nama barang. Kode ditampilkan sebagai kolom tersendiri di tabel, lebih besar pada label QR cetak, hasil scan HP dan transaksi pending. Cocokkan kode pada label posisi dan barang saat pengambilan, terutama untuk varian yang berdampingan. QR tetap token unik, bukan kode barang; pencarian mendukung kode dan nama. File Excel data barang/riwayat memakai kolom *Kode Barang*; JSON API tetap memakai `sku` agar kompatibel.
 
 **Fast/Slow adalah label manual milik gudang**, dipilih pada Tambah/Edit Barang dan disimpan dalam MySQL (`movement_class`: `FAST`, `SLOW`, `DEAD`, atau NULL). Tidak ada rumus, ambang, periode, atau klasifikasi berdasarkan OUT. Label tidak berubah saat scan, approve, cancel atau adjustment. Barang tanpa label tetap tampil sebagai **Belum diberi label**, tidak dianggap Slow secara otomatis.
 
@@ -108,7 +108,7 @@ Pilihan **Barang → Urutkan**:
 | Belum diberi label · A–Z                | Barang yang belum diklasifikasikan oleh user                                         |
 | Kode Barang A–Z                         | Urut identitas kode barang                                                           |
 
-Pengelompokan dilakukan backend SQL sebelum pagination. CSV mengikuti filter dan urutan, mencantumkan kode barang, total OUT dan label manual. Perbandingan total unit OUT perlu memperhatikan satuan masing-masing barang. Hanya OUT APPROVED dengan waktu approve tidak di masa depan yang dihitung untuk total tersebut.
+Pengelompokan dilakukan backend SQL sebelum pagination. Unduhan Excel mengikuti filter dan urutan, mencantumkan kode barang, total keluar dan label manual. Perbandingan total unit OUT perlu memperhatikan satuan masing-masing barang. Hanya OUT APPROVED dengan waktu approve tidak di masa depan yang dihitung untuk total tersebut.
 
 ### Upgrade label manual
 
@@ -119,7 +119,7 @@ Pengelompokan dilakukan backend SQL sebelum pagination. CSV mengikuti filter dan
 
 API POST/PATCH produk menerima `movement_class:"FAST"`, `"SLOW"`, `"DEAD"`, atau `null` (hapus label). Omit field saat PATCH untuk mempertahankan label. Kode barang tetap memakai `sku`. GET produk: `sort=name|stock|out_total|location|movement|fast|slow|dead|unlabelled|sku|id`. Parameter periode dan ambang versi sebelumnya sudah tidak digunakan. Histori tetap default transaksi terbaru dahulu.
 
-Pengujian `npm run test:reports` memastikan label manual terpisah dari OUT, termasuk Fast tanpa OUT, Slow dengan OUT tinggi, hapus label, urutan A–Z, CSV, serta kode unik varian kapasitas berdampingan.
+Pengujian `npm run test:reports` memastikan label manual terpisah dari OUT, termasuk Fast tanpa OUT, Slow dengan OUT tinggi, hapus label, urutan A–Z, unduhan Excel, serta kode unik varian kapasitas berdampingan.
 
 ## Saat web error: cadangan Excel, buku darurat, antrean offline HP
 
@@ -160,7 +160,7 @@ Aplikasi HP menyimpan daftar barang (diperbarui otomatis tiap 30 menit saat onli
 
 ## Kode Masuk (barang IN) dan Cek Barang (aplikasi HP 1.2.0)
 
-- **Kode Masuk:** setiap barang masuk dari aplikasi HP wajib kode berformat `111.22.33` (3 angka . 2 angka . 2 angka). Barang kategori **ATK** wajib `ATK.111.22.33`. Format dicek di server berdasarkan kategori barang (`INVALID_IN_CODE` bila salah). Kode tersimpan di `stock_transactions.in_code`, tampil di Riwayat (tab Masuk & Semua), bisa dicari, ikut CSV dan Excel (kolom *Kode Masuk*). Barang keluar tidak berubah.
+- **Kode Masuk:** setiap barang masuk dari aplikasi HP wajib kode berformat `111.22.33` (3 angka . 2 angka . 2 angka). Barang kategori **ATK** wajib `ATK.111.22.33`. Format dicek di server berdasarkan kategori barang (`INVALID_IN_CODE` bila salah). Kode tersimpan di `stock_transactions.in_code`, tampil di Riwayat (tab Masuk & Semua), bisa dicari, ikut unduhan Excel dan Excel cadangan (kolom *Kode Masuk*). Barang keluar tidak berubah.
 - **Cek Barang:** halaman baru di aplikasi HP untuk melihat detail barang hasil scan (`GET /api/product-info/:qr_token`), tidak mengubah stok.
 - **Foto barang dihapus** dari web dan aplikasi HP. **`migrations/011_drop_product_image.sql`** membuang kolom `products.image`; jalankan **setelah** source baru aktif (source lama masih memakai kolom itu).
 - Butuh **`migrations/010_in_code.sql`** sekali. Setelah server baru aktif, transaksi IN dari aplikasi lama (tanpa kode) ditolak, jadi pasang APK 1.2.0 di semua HP bersamaan dengan deploy. Barang masuk lewat buku darurat Excel tidak memakai kode masuk.
@@ -186,7 +186,7 @@ Aturan yang dijaga server (juga saat dua HP scan bersamaan):
 Di web:
 
 - **Dashboard → Riwayat reservasi**: satu baris per no reservasi (terbaru di atas, 10 per halaman): jumlah barang yang diambil, progres & status (mis. *Belum selesai 3/5*), scan terakhir, dan petugas. **Klik baris** untuk melihat barang apa saja yang diambil (kode, nama, qty, lokasi, waktu, petugas, nomor transaksi). Bisa dicari per no reservasi atau kode/nama barang dan difilter status. Reservasi lama (sebelum fitur ini) juga tampil, dikelompokkan per no reservasi, tanpa progres/status. Barang yang dicatat dengan no reservasi yang sama dari aplikasi lama/buku darurat ditandai *di luar sesi HP* dan tidak dihitung di progres.
-- **Riwayat → No reservasi** tetap seperti sebelumnya: semua barang keluar satu per satu, bisa direvisi dan diekspor CSV.
+- **Riwayat → No reservasi** tetap seperti sebelumnya: semua barang keluar satu per satu, bisa direvisi dan diunduh sebagai Excel.
 
 Butuh **`migrations/013_reservations.sql`** sekali (tabel `reservations` + kolom `stock_transactions.reservation_id`), dijalankan **sebelum** source baru aktif. Lalu pasang **APK 1.3.0** di semua HP; APK 1.3.0 butuh server versi ini.
 
@@ -333,18 +333,22 @@ Lihat [Next.js CLI — HTTPS](https://nextjs.org/docs/app/api-reference/cli/next
 ## Penggunaan
 
 - **Tambah Barang**: Kode Barang unik, nama, kategori, satuan, ruangan, blok, rak, dan nomor penempatan wajib. Nomor penempatan diketik langsung; posisi dibuat otomatis bila belum ada dan ditolak jika sudah ditempati barang aktif. Tidak ada input stok. Barang tidak memakai foto.
+- **Data barang**: filter kategori, stok, status, dan urutan/label Fast-Slow-Dead (filter ruangan & posisi dihapus). **Export Excel** mengunduh semua hasil filter.
+- **Print QR massal** (Barang → Print QR massal): saring barang aktif per **blok, rak, Fast/Slow/Dead/belum diberi label, kategori**, atau pencarian; semua hasil filter langsung tercentang, hapus centang yang tidak dicetak. **Print A4** = 35 label 35 × 35 mm per halaman dengan garis potong; **Printer label** = satu label per halaman. Opsi baris kecil lokasi di bawah kode (mis. *Blok A - A.01.01*). Label urut lokasi rak; maksimal 1.000 label sekali print (persempit filter untuk sisanya).
+- **Opname harian** (menu Opname harian): per barang pada tanggal yang dipilih (default hari ini, jam WIB): **stok awal, masuk, keluar, koreksi, sisa** dan status stok. Default hanya barang yang ada transaksi hari itu; centang *Tampilkan semua barang aktif* untuk semua barang. Filter kategori/blok, urut lokasi rak (urutan menghitung fisik), nama, atau keluar terbanyak. **Export Excel** untuk dicetak/dicocokkan dengan hitungan fisik. Sisa hari ini = stok sekarang; tanggal lalu dihitung mundur dari stok sekarang memakai waktu kejadian transaksi selesai (sama dengan IN/OUT hari ini di dashboard; antrean offline & buku darurat memakai waktu aslinya). Perubahan stok di luar transaksi (mis. `npm run stock:reset`) tidak tercatat, dan bila stok awal sebuah barang baru diisi lewat koreksi setelah transaksi lamanya dicatat, stok awal hari-hari sebelumnya bisa minus.
+- **Unduhan Excel** (data barang, riwayat, opname): gaya sama dengan Excel cadangan — judul dan keterangan filter, header hijau, kolom bahasa Indonesia selebar isinya, tanggal & jam WIB sebagai nilai tanggal Excel, kode barang & no reservasi tetap teks (nol di depan aman), stok sebagai angka. Terbuka rapi di Excel bahasa apa pun (menggantikan CSV).
 - **QR Barang**: download SVG, Print QR dengan nama/SKU/lokasi lengkap dan ruangan. QR hanya memuat UUID, bukan SKU atau nomor rak. Regenerate membatalkan token lama; cetak dan ganti label setelahnya.
 - **Aplikasi scanner HP**: IN → ATK/bukan ATK + kode masuk + total item sekali → scan QR → jumlah → Selesai, berulang sampai semua item masuk (lihat *Sesi kode masuk barang masuk*). OUT → no reservasi + total item sekali → scan QR → jumlah → Selesai, berulang sampai semua item terambil (lihat *Sesi reservasi barang keluar*). Backend memeriksa barang (aktif, tidak pending, OUT tidak stok 0); jumlah memakai keyboard angka, OUT tidak boleh melebihi stok. Transaksi tersimpan **APPROVED** dan stok langsung berubah, tanpa approval komputer. Kamera mati selama layar jumlah/hasil terbuka; **Scan berikutnya** menyalakannya lagi.
 - **Riwayat reservasi** (dashboard): per no reservasi, progres & status sesi HP; klik untuk melihat barang yang diambil.
 - **Riwayat penerimaan** (dashboard): per kode masuk, progres & status sesi HP; klik untuk melihat barang yang masuk.
-- **No Reservasi**: tab di menu **Riwayat**: semua barang keluar satu per satu dengan no reservasi, waktu, kode/nama barang, qty, lokasi, petugas (akun yang scan), nomor transaksi. Pencarian riwayat menerima no reservasi; CSV `riwayat-reservations` menaruh no reservasi di kolom pertama.
+- **No Reservasi**: tab di menu **Riwayat**: semua barang keluar satu per satu dengan no reservasi, waktu, kode/nama barang, qty, lokasi, petugas (akun yang scan), nomor transaksi. Pencarian riwayat menerima no reservasi; Excel `riwayat-no-reservasi-….xlsx` menaruh no reservasi di kolom pertama.
 - **Transaksi Pending**: daftarnya ada di Dashboard (bagian Transaksi menunggu). Alur lama (scan → approve di komputer) masih tersedia untuk pending yang sudah ada dan client API lama (`POST /api/scan`). Isi jumlah positif (bilangan bulat; barang Kg boleh berkoma maks. 3 desimal), lihat preview, Approve atau Batalkan.
 - **Koreksi Stok**: buka barang di menu **Barang** → **Edit**; bagian **Koreksi stok** ada di bawah form data barang (satu halaman dengan Edit Barang). Kolom jumlah otomatis terisi stok di web; ganti dengan **jumlah yang sebenarnya ada di gudang** (mis. web 10, gudang 8 → ketik 8). Selisih dihitung otomatis. Pilih alasan (Rusak, Hilang, Kedaluwarsa, Ditemukan, Selisih stock opname, Salah input, Lainnya + keterangan). Backend memeriksa stok yang dilihat user masih sama; jika berubah, muat ulang. Quantity histori koreksi adalah selisih (dapat negatif); riwayatnya ada di detail barang dan di **Riwayat → Koreksi stok**.
 - **Lokasi**: dipilih di form Tambah/Edit Barang (ruangan → blok → rak → nomor penempatan; posisi baru dibuat otomatis). Menu Lokasi Gudang sudah dihapus; ruangan/blok/rak baru dapat ditambahkan lewat API `/api/rooms`, `/api/blocks`, dan `/api/racks`.
 - **Edit/rak**: stok dan Kode Barang tidak dapat diedit. Perpindahan rak membutuhkan konfirmasi; posisi baru harus kosong (rak yang sama boleh menampung barang lain). Histori menyimpan ID dan kode rak saat transaksi, tidak berubah saat master rak diedit.
 - **Nonaktifkan**: record barang dipertahankan. QR nonaktif ditolak. Tidak dapat mengubah barang/rak/QR/adjustment saat ada pending; selesaikan dahulu.
 - **Dashboard**: setiap kotak angka bisa diklik dan membuka datanya (daftar barang, riwayat masuk/keluar/semua transaksi hari ini, tab stok menipis/habis, atau daftar transaksi menunggu).
-- **Riwayat**: satu menu dengan tab Semua, Barang masuk, Barang keluar, No reservasi, dan Koreksi stok. Filter tanggal juga bisa diisi lewat alamat, mis. `/history/in?from=2026-10-24&to=2026-10-24`. Semua status tersedia, filter tanggal berdasarkan `scanned_at` di timezone aplikasi. IN/OUT hari ini pada dashboard dihitung berdasarkan `approved_at`, hanya APPROVED. CSV mengekspor seluruh hasil filter, bukan hanya halaman saat ini. Waktu CSV adalah UTC dari database. Formula berbahaya pada CSV dinetralkan.
+- **Riwayat**: satu menu dengan tab Semua, Barang masuk, Barang keluar, No reservasi, dan Koreksi stok. Filter tanggal juga bisa diisi lewat alamat, mis. `/history/in?from=2026-10-24&to=2026-10-24`. Semua status tersedia, filter tanggal berdasarkan `scanned_at` di timezone aplikasi. IN/OUT hari ini pada dashboard dihitung berdasarkan `approved_at`, hanya APPROVED. Tombol **Excel** mengunduh seluruh hasil filter, bukan hanya halaman saat ini.
 - **Revisi transaksi**: di menu **Riwayat** (tab Barang masuk, Barang keluar, atau No reservasi) klik **nama barang** untuk memperbaiki jumlah dan/atau no reservasi (khusus barang keluar) yang salah input. Stok barang disesuaikan sebesar selisih jumlah (mis. keluar tercatat 5, sebenarnya 3 → stok naik 2) dan ditolak bila stok menjadi minus. Jejak revisi (waktu, user, perubahan, alasan) ditambahkan ke kolom Alasan. Transaksi pending, dibatalkan, dan koreksi stok tidak dapat direvisi. Stok sebelum/sesudah pada transaksi yang direvisi dihitung ulang dari stok sebelumnya; transaksi lain tidak diubah.
 - **Stok menipis / habis**: tab di halaman **Barang**. Menipis = stok sama dengan atau kurang dari **Stok minimal** barang itu (termasuk 0); habis = 0. Stok minimal diisi di form Tambah/Edit Barang atau diimpor dari kolom `min` (lihat *Impor barang dari CSV*); barang tanpa batas sendiri memakai 2. Butuh **`migrations/012_min_stock.sql`** sekali, dijalankan **sebelum** source baru aktif. **Kategori** dikelola di menu **Pengaturan**. Card dashboard memisahkan stok menipis (di atas 0) dan stok 0.
 
@@ -365,7 +369,7 @@ Lihat [Next.js CLI — HTTPS](https://nextjs.org/docs/app/api-reference/cli/next
 
 ## API
 
-Semua API berbasis JSON kecuali QR SVG, CSV dan SSE. Autentikasi menggunakan session cookie. Respons normal `{success:true,message,data}`, error `{success:false,code,message,details?}`. Validation 422, konflik 409, unauthenticated 401.
+Semua API berbasis JSON kecuali QR SVG, PDF label, unduhan Excel dan SSE. Autentikasi menggunakan session cookie. Respons normal `{success:true,message,data}`, error `{success:false,code,message,details?}`. Validation 422, konflik 409, unauthenticated 401.
 
 | Method       | Endpoint                                                          | Input/keterangan                                   |
 | ------------ | ----------------------------------------------------------------- | -------------------------------------------------- |
@@ -397,7 +401,10 @@ Semua API berbasis JSON kecuali QR SVG, CSV dan SSE. Autentikasi menggunakan ses
 | PATCH        | `/api/transactions/:id/revise`                                    | `{quantity?,reservation_number?,reason?}`; revisi IN/OUT APPROVED, stok disesuaikan selisih |
 | POST         | `/api/transactions/:id/approve`                                   | `{quantity}` atau quantity tersimpan               |
 | POST         | `/api/transactions/:id/cancel`                                    | `{}`                                               |
-| GET/POST     | `/api/products`                                                   | list / create                                      |
+| GET/POST     | `/api/products`                                                   | list / create; `export=xlsx` = Excel semua hasil filter |
+| GET          | `/api/labels`                                                     | Print QR massal: barang aktif sesuai `q,category_id,block_id,rack_id,movement=FAST\|SLOW\|DEAD\|NONE` (maks. 1.000, urut lokasi) + `total` |
+| GET          | `/api/labels/pdf`                                                 | PDF label 35 × 35 mm: `ids=1,2,3` (maks. 1.000), `layout=sheet` (A4, 35 per halaman) \| `roll` (1 per halaman), `location=1\|0` (baris lokasi) |
+| GET          | `/api/opname`                                                     | Opname harian: `date` (default hari ini), `all=0\|1`, `q,category_id,block_id`, `sort=location\|name\|outgoing`, `page,limit`; `export=xlsx` |
 | GET/PATCH    | `/api/products/:id`                                               | detail / edit, `{active:false}` untuk nonaktif     |
 | GET/POST     | `/api/products/:id/qr`                                            | SVG / regenerate                                   |
 | GET          | `/api/history/in`, `/api/history/out`, `/api/history/adjustments` | histori                                            |
@@ -409,7 +416,7 @@ Semua API berbasis JSON kecuali QR SVG, CSV dan SSE. Autentikasi menggunakan ses
 | GET          | `/api/events`                                                     | SSE event `update`                                 |
 | GET          | `/api/settings`                                                   | konfigurasi publik, tanpa credential               |
 
-List products/history: `q,page,limit,sort,direction,location_id`; products menambah `category_id,stock=low|zero|safe,active=0|1|all`; history menambah `product_id,status,from,to`. CSV: `export=csv`. Field sort dipetakan ke daftar kolom internal, tidak diinterpolasi mentah dari input.
+List products/history: `q,page,limit,sort,direction,location_id`; products menambah `category_id,stock=low|zero|safe,active=0|1|all`; history menambah `product_id,status,from,to`. Excel: `export=xlsx`. Field sort dipetakan ke daftar kolom internal, tidak diinterpolasi mentah dari input.
 
 Client nonbrowser (aplikasi Flutter, scanner fisik) tidak mengirim header Origin dan wajib menyertakan cookie session hasil login. Halaman scanner web `/scanner` sudah dihapus; scan memakai aplikasi di `mobile/`.
 
@@ -508,4 +515,4 @@ Periksa juga izin kamera ditolak, sertifikat HTTPS, senter, getaran, print label
 
 ### HTTP smoke test
 
-Setelah integration test, jalankan server dengan konfigurasi database test yang sama (misalnya salin `.env.test` ke `.env.local` pada checkout test terpisah), kemudian `npm run build`, `npm start`, dan di terminal kedua `npm run test:http`. Default URL test `http://127.0.0.1:3000`; tambahkan origin ini ke `ALLOWED_ORIGINS`. Jangan jalankan terhadap database operasional. Test membuat akun/barang test, memeriksa autentikasi, Origin, validasi, QR SVG, SSE, quantity, approve, histori, CSV dan pencabutan session.
+Setelah integration test, jalankan server dengan konfigurasi database test yang sama (misalnya salin `.env.test` ke `.env.local` pada checkout test terpisah), kemudian `npm run build`, `npm start`, dan di terminal kedua `npm run test:http`. Default URL test `http://127.0.0.1:3000`; tambahkan origin ini ke `ALLOWED_ORIGINS`. Jangan jalankan terhadap database operasional. Test membuat akun/barang test, memeriksa autentikasi, Origin, validasi, QR SVG, SSE, quantity, approve, histori, unduhan Excel, opname harian, print QR massal dan pencabutan session.

@@ -9,6 +9,7 @@ import {
   Settings,
   LogOut,
   ClipboardList,
+  ClipboardCheck,
   Menu,
   Search,
 } from "lucide-react";
@@ -24,6 +25,7 @@ const links = [
   ["/", "Dashboard", LayoutDashboard, []],
   ["/products", "Barang", Package, ["/products/", "/low-stock"]],
   ["/history", "Riwayat", ClipboardList, ["/history/", "/reservations"]],
+  ["/opname", "Opname harian", ClipboardCheck, []],
   ["/settings", "Pengaturan", Settings, []],
 ] as const;
 function isActive(path: string, href: string, prefixes: readonly string[]) {

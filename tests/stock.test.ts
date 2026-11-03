@@ -3,7 +3,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { allowsDecimal, calculateStock, correction, stockLabel } from "../src/lib/stock";
 import { quantitySchema, scanSchema, productSchema } from "../src/validators";
-import { dateBoundary, csv } from "../src/services/reports";
+import { dateBoundary } from "../src/services/reports";
 test("IN and OUT arithmetic; stock never negative", () => {
   assert.equal(calculateStock(15, 10, "IN"), 25);
   assert.equal(calculateStock(25, 5, "OUT"), 20);
@@ -94,26 +94,6 @@ test("Indonesian date filters map to UTC boundaries", () => {
   assert.equal(dateBoundary("2026-09-30"), "2026-09-29 17:00:00");
   assert.equal(dateBoundary("2026-09-30", true), "2026-09-30 17:00:00");
 });
-test("CSV escapes quotes and spreadsheet formulas", async () => {
-  const text = await csv(
-    [{ name: '=HYPERLINK("x")' }],
-    ["name"],
-    "test",
-  ).text();
-  assert.ok(text.includes("'=HYPERLINK"));
-  assert.ok(text.includes('""x""'));
-});
-
-test("CSV keeps negative numbers numeric but escapes text starting with minus", async () => {
-  const text = await csv(
-    [{ quantity: -5, notes: "-hapus" }],
-    ["quantity", "notes"],
-    "test",
-  ).text();
-  assert.ok(text.includes('"-5"'));
-  assert.ok(text.includes(`"'-hapus"`));
-});
-
 test("history sort only accepts known columns", async () => {
   const { listSchema } = await import("../src/validators");
   for (const sort of ["constructor", "__proto__", "toString", "t.id; DROP"])

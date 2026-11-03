@@ -40,8 +40,6 @@ export function ProductsPage({ low = false }: { low?: boolean }) {
   const { version } = useLive();
   const [q, setQ] = useState("");
   const [category, setCategory] = useState("");
-  const [rack, setRack] = useState("");
-  const [roomFilter, setRoomFilter] = useState("");
   const [stock, setStock] = useState(low ? "low" : "");
   const [active, setActive] = useState("1");
   const [sort, setSort] = useState("name");
@@ -60,8 +58,6 @@ export function ProductsPage({ low = false }: { low?: boolean }) {
     direction: ["stock", "out_total"].includes(sort) ? "desc" : "asc",
     active,
     ...(category ? { category_id: category } : {}),
-    ...(rack ? { location_id: rack } : {}),
-    ...(roomFilter ? { room_id: roomFilter } : {}),
     ...(stock ? { stock } : {}),
   });
   const list = useData<{ items: InventoryProduct[]; total: number }>(
@@ -69,7 +65,6 @@ export function ProductsPage({ low = false }: { low?: boolean }) {
     version,
   );
   const categories = useData<Lookup[]>("categories");
-  const locations = useData<LocationLookup[]>("locations");
   const reset = (fn: () => void) => {
     fn();
     setPage(1);
@@ -78,10 +73,16 @@ export function ProductsPage({ low = false }: { low?: boolean }) {
     <>
       <Heading title="Data barang">
         <Button variant="outline" asChild>
-          <a href={"/api/products?" + params + "&export=csv"}>
+          <a href={"/api/products?" + params + "&export=xlsx"}>
             <Download />
-            Export CSV
+            Export Excel
           </a>
+        </Button>
+        <Button variant="outline" asChild>
+          <Link href="/products/labels">
+            <Printer />
+            Print QR massal
+          </Link>
         </Button>
         <Button asChild>
           <Link href="/products/new">
@@ -124,41 +125,6 @@ export function ProductsPage({ low = false }: { low?: boolean }) {
             ))}
           </select>
           <select
-            aria-label="Filter ruangan"
-            value={roomFilter}
-            onChange={(e) =>
-              reset(() => {
-                setRoomFilter(e.target.value);
-                setRack("");
-              })
-            }
-          >
-            <option value="">Semua ruangan</option>
-            {[
-              ...new Map(
-                (locations.data || []).map((l) => [l.room_id, l]),
-              ).values(),
-            ].map((l) => (
-              <option key={l.room_id} value={l.room_id}>
-                {l.room_name}
-              </option>
-            ))}
-          </select>
-          <select
-            aria-label="Posisi"
-            value={rack}
-            onChange={(e) => reset(() => setRack(e.target.value))}
-          >
-            <option value="">Semua posisi</option>
-            {locations.data
-              ?.filter((l) => !roomFilter || l.room_id === Number(roomFilter))
-              .map((l) => (
-                <option key={l.id} value={l.id}>
-                  {l.room_name} / {l.code}
-                </option>
-              ))}
-          </select>
-          <select
             aria-label="Filter stok"
             value={stock}
             onChange={(e) => reset(() => setStock(e.target.value))}
@@ -166,7 +132,7 @@ export function ProductsPage({ low = false }: { low?: boolean }) {
             <option value="">Semua stok</option>
             <option value="low">Menipis ≤ batas minimal</option>
             <option value="zero">Habis</option>
-            <option value="safe">Aman &gt; 2</option>
+            <option value="safe">Aman &gt; batas minimal</option>
           </select>
           <select
             aria-label="Status barang"

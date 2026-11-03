@@ -6,6 +6,8 @@ import {
   ProductDetail,
   HistoryHub,
   SettingsPage,
+  OpnamePage,
+  LabelsPage,
 } from "@/components/workspace";
 export default async function Page({
   params,
@@ -21,6 +23,7 @@ export default async function Page({
   if (key === "products") return <ProductsPage />;
   if (key === "low-stock") return <ProductsPage low />;
   if (key === "products/new") return <ProductForm />;
+  if (key === "products/labels") return <LabelsPage />;
   if (path[0] === "products" && /^\d+$/.test(path[1] || "")) {
     if (path[2] === "edit") return <ProductForm id={Number(path[1])} />;
     if (path.length === 2 || path[2] === "qr")
@@ -37,6 +40,7 @@ export default async function Page({
   if (key === "adjustments") redirect("/products");
   if (path[0] === "adjustments" && /^\d+$/.test(path[1] || "") && path.length === 2)
     redirect(`/products/${path[1]}/edit#koreksi`);
+  if (key === "opname") return <OpnamePage />;
   if (key === "settings") return <SettingsPage />;
   notFound();
 }

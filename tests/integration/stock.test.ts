@@ -1163,3 +1163,118 @@ test("sesi kode masuk HP: barang masuk per kode masuk, ATK dipisah, selesai otom
     );
   });
 });
+
+test("opname harian: stok awal, masuk, keluar, koreksi, sisa per tanggal (WIB)", async (t) => {
+  const { opname } = await import("../../src/services/opname");
+  const { opnameSchema } = await import("../../src/validators");
+  const make = async (sku: string, position: number, unit = "PCS") => {
+    const id = (
+      await createProduct({ sku, name: `Opname ${sku}`, unit, category_id: category, rack_id: rack, position_number: position })
+    ).id;
+    const [{ qr_token }] = await rows<{ qr_token: string }>("SELECT qr_token FROM products WHERE id=?", [id]);
+    return { id, qr_token };
+  };
+  const [a, b, c] = [await make("OPN-A", 201), await make("OPN-B", 202, "Kg"), await make("OPN-C", 203)];
+  const today = localDay();
+  const yesterday = localDay(new Date(zonedToUtc({ ...wall(today), hour: 12 }).getTime() - 86400000));
+  const before = localDay(new Date(zonedToUtc({ ...wall(today), hour: 12 }).getTime() - 2 * 86400000));
+  function wall(day: string) {
+    const [year, month, date] = day.split("-").map(Number);
+    return { year, month, day: date, hour: 0, minute: 0, second: 0 };
+  }
+  // Kemarin 10.00 & 15.00 WIB (dikirim dari antrean HP dengan waktu aslinya), lalu hari ini.
+  const at = (day: string, hour: number) => zonedToUtc({ ...wall(day), hour }).toISOString();
+  await record({ qr_token: a.qr_token, mode: "IN", quantity: 10, in_code: "111.22.33", recorded_at: at(yesterday, 10) }, user);
+  await record({ qr_token: a.qr_token, mode: "OUT", quantity: 4, reservation_number: "7000101", recorded_at: at(yesterday, 15) }, user);
+  await record({ qr_token: a.qr_token, mode: "OUT", quantity: 3, reservation_number: "7000102" }, user);
+  await record({ qr_token: b.qr_token, mode: "IN", quantity: 2.5, in_code: "111.22.34" }, user);
+  await adjustment({ product_id: a.id, physical_stock: 2, expected_stock: 3, notes: "Hitung fisik" }, user);
+  const run = (f: Record<string, unknown>) => opname(opnameSchema.parse({ q: "OPN-", ...f }));
+  const pick = (r: Awaited<ReturnType<typeof run>>) =>
+    r.items.map((i) => [i.sku, i.opening, i.incoming, i.outgoing, i.adjustment, i.closing, i.transactions]);
+
+  await t.test("hari ini: hanya barang yang bergerak; sisa = stok sekarang", async () => {
+    const r = await run({});
+    assert.equal(r.date, today);
+    assert.deepEqual(pick(r), [
+      ["OPN-A", 6, 0, 3, -1, 2, 2],
+      ["OPN-B", 0, 2.5, 0, 0, 2.5, 1],
+    ]);
+    assert.deepEqual([r.total, r.moved, r.outgoing_items, r.incoming_items], [2, 2, 1, 1]);
+  });
+  await t.test("kemarin: dihitung mundur dari stok sekarang", async () => {
+    assert.deepEqual(pick(await run({ date: yesterday })), [["OPN-A", 0, 10, 4, 0, 6, 2]]);
+  });
+  await t.test("semua barang aktif: barang tanpa transaksi ikut, stok awal = sisa", async () => {
+    const r = await run({ date: before, all: "1" });
+    assert.deepEqual(pick(r), [
+      ["OPN-A", 0, 0, 0, 0, 0, 0],
+      ["OPN-B", 0, 0, 0, 0, 0, 0],
+      ["OPN-C", 0, 0, 0, 0, 0, 0],
+    ]);
+    assert.equal(r.moved, 0);
+    assert.deepEqual(pick(await run({ all: "1", q: "OPN-C" })), [["OPN-C", 0, 0, 0, 0, 0, 0]]);
+  });
+  await t.test("urut keluar terbanyak, filter blok, tanggal setelah hari ini ditolak", async () => {
+    assert.deepEqual(
+      (await run({ date: yesterday, all: "1", sort: "outgoing" })).items.map((i) => i.sku),
+      ["OPN-A", "OPN-B", "OPN-C"],
+    );
+    assert.equal((await run({ block_id: block })).total, 2);
+    await assert.rejects(
+      run({ date: "2999-01-01" }),
+      (e: { code?: string }) => e.code === "INVALID_DATE",
+    );
+  });
+  await t.test("transaksi dibatalkan/menunggu tidak mengubah opname", async () => {
+    const pending = await scan(c.qr_token, "IN", user);
+    await cancel(pending.id);
+    assert.deepEqual(pick(await run({ q: "OPN-C" })), []);
+  });
+});
+
+test("print QR massal: filter blok/rak/pergerakan, PDF label urut lokasi", async () => {
+  const { labelCandidates, labelsPdfFor } = await import("../../src/services/labels");
+  const { labelListSchema, labelPdfSchema } = await import("../../src/validators");
+  const [{ next }] = await rows<{ next: number }>("SELECT MAX(rack_number)+1 next FROM racks WHERE block_id=?", [block]);
+  const rack2 = (await mutateLocation("racks", "POST", undefined, { block_id: block, rack_number: next, name: "Rak baru" })).id!;
+  const make = async (sku: string, rackId: number, position: number, movement: "FAST" | "SLOW" | null) =>
+    (
+      await createProduct({
+        sku,
+        name: `Label ${sku}`,
+        unit: "PCS",
+        category_id: category,
+        rack_id: rackId,
+        position_number: position,
+        movement_class: movement,
+      })
+    ).id;
+  const fast2 = await make("LBL-F2", rack2, 1, "FAST");
+  const fast1 = await make("LBL-F1", rack, 301, "FAST");
+  const slow = await make("LBL-S1", rack, 302, "SLOW");
+  const none = await make("LBL-N1", rack, 303, null);
+  const off = await make("LBL-OFF", rack, 304, "FAST");
+  await editProduct(off, { active: false });
+  const list = async (f: Record<string, unknown>) =>
+    (await labelCandidates(labelListSchema.parse({ q: "LBL-", ...f }))).items.map((i) => i.sku);
+  // Urut lokasi (rak 01 lalu rak baru); barang nonaktif tidak ikut.
+  assert.deepEqual(await list({}), ["LBL-F1", "LBL-S1", "LBL-N1", "LBL-F2"]);
+  assert.deepEqual(await list({ movement: "FAST" }), ["LBL-F1", "LBL-F2"]);
+  assert.deepEqual(await list({ movement: "NONE" }), ["LBL-N1"]);
+  assert.deepEqual(await list({ rack_id: rack2 }), ["LBL-F2"]);
+  assert.deepEqual(await list({ block_id: block, movement: "SLOW" }), ["LBL-S1"]);
+  const candidate = (await labelCandidates(labelListSchema.parse({ q: "LBL-F1" }))).items[0];
+  assert.equal("qr_token" in candidate, false);
+  assert.deepEqual([candidate.block_code, candidate.location_code], ["T", "T.01.301"]);
+
+  const { pdf, count } = await labelsPdfFor(
+    labelPdfSchema.parse({ ids: [fast2, fast1, slow, none, 999999999].join(","), layout: "roll" }),
+  );
+  assert.equal(count, 4, "id yang tidak ada dilewati");
+  const text = pdf.toString("latin1");
+  assert.match(text, /\/Count 4 /);
+  assert.match(text, /\/MediaBox \[0 0 99\.213 99\.213\]/);
+  const sheet = await labelsPdfFor(labelPdfSchema.parse({ ids: String(fast1), location: "0" }));
+  assert.match(sheet.pdf.toString("latin1"), /\/MediaBox \[0 0 595\.276 841\.89\]/);
+});

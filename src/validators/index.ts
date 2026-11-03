@@ -257,7 +257,8 @@ export const listSchema = z.object({
   active: z.enum(["0", "1", "all"]).default("1"),
   from: z.iso.date().optional(),
   to: z.iso.date().optional(),
-  export: z.enum(["csv"]).optional(),
+  // Unduh semua hasil filter sebagai Excel (.xlsx), bukan hanya halaman ini.
+  export: z.enum(["xlsx"]).optional(),
 });
 
 // Product ordering is independent of history's newest-first default.
@@ -278,4 +279,45 @@ export const productListSchema = listSchema.extend({
     ])
     .default("name"),
   direction: z.enum(["asc", "desc"]).optional(),
+});
+
+// Opname harian: stok awal, masuk, keluar, koreksi, dan sisa per barang pada satu tanggal.
+export const opnameSchema = z.object({
+  date: z.iso.date().optional(),
+  q: z.string().trim().max(160).default(""),
+  category_id: idSchema.optional(),
+  block_id: idSchema.optional(),
+  /** 1 = semua barang aktif; default hanya barang yang ada transaksi pada tanggal itu. */
+  all: z.enum(["0", "1"]).default("0"),
+  sort: z.enum(["location", "name", "outgoing"]).default("location"),
+  page: z.coerce.number().int().min(1).max(100000).default(1),
+  limit: z.coerce.number().int().min(1).max(100).default(50),
+  export: z.enum(["xlsx"]).optional(),
+});
+
+/** Maks. label QR sekali print (PDF ± 1 KB per label). */
+export const MAX_LABELS = 1000;
+// Print QR massal: pilih barang aktif lewat filter.
+export const labelListSchema = z.object({
+  q: z.string().trim().max(160).default(""),
+  category_id: idSchema.optional(),
+  block_id: idSchema.optional(),
+  rack_id: idSchema.optional(),
+  movement: z.enum(["FAST", "SLOW", "DEAD", "NONE"]).optional(),
+});
+export const labelPdfSchema = z.object({
+  ids: z
+    .string()
+    .regex(/^\d+(,\d+)*$/, "Pilih barang yang akan dicetak.")
+    .transform((value) => [...new Set(value.split(",").map(Number))])
+    .pipe(
+      z
+        .array(z.number().int().positive().max(2147483647))
+        .min(1, "Pilih barang yang akan dicetak.")
+        .max(MAX_LABELS, `Maksimal ${MAX_LABELS} label sekali print.`),
+    ),
+  /** sheet = kertas A4 (35 label per halaman); roll = printer label, 1 label per halaman. */
+  layout: z.enum(["sheet", "roll"]).default("sheet"),
+  /** 1 = baris kecil lokasi di bawah kode barang, mis. "Blok A - A.01.01". */
+  location: z.enum(["0", "1"]).default("1"),
 });

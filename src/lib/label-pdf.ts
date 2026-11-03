@@ -1,3 +1,4 @@
+import { deflateSync } from "node:zlib";
 import QRCode from "qrcode";
 
 // Label QR 35 x 35 mm sebagai PDF: QR + kode barang (+ baris kecil opsional, mis. blok).
@@ -39,12 +40,17 @@ function labelContent({ qrToken, sku, note }: Label, x0 = 0, y0 = 0) {
   const left = x0 + (page - qrMm * MM) / 2;
   const top = y0 + page - qrTop * MM; // koordinat PDF dihitung dari bawah
   const ops = ["0 g"];
+  // Kotak hitam berurutan dalam satu baris digabung menjadi satu persegi panjang
+  // (file jauh lebih kecil untuk cetak ratusan label sekaligus).
   for (let row = 0; row < size; row++)
-    for (let col = 0; col < size; col++)
-      if (qr.modules.get(row, col))
-        ops.push(
-          `${num(left + col * cell)} ${num(top - (row + 1) * cell)} ${num(cell)} ${num(cell)} re`,
-        );
+    for (let col = 0; col < size; col++) {
+      if (!qr.modules.get(row, col)) continue;
+      const start = col;
+      while (col + 1 < size && qr.modules.get(row, col + 1)) col++;
+      ops.push(
+        `${num(left + start * cell)} ${num(top - (row + 1) * cell)} ${num((col - start + 1) * cell)} ${num(cell)} re`,
+      );
+    }
   ops.push("f");
   // Kode barang tebal (Courier-Bold), baris tambahan kecil & tipis (Courier).
   const baseline = top - qrMm * MM - gap * MM;
@@ -53,7 +59,7 @@ function labelContent({ qrToken, sku, note }: Label, x0 = 0, y0 = 0) {
   return ops.join("\n");
 }
 
-/** PDF dari halaman-halaman (ukuran dalam pt, isi content stream). */
+/** PDF dari halaman-halaman (ukuran dalam pt, isi content stream dikompres Flate). */
 function buildPdf(pages: { width: number; height: number; content: string }[]) {
   // Objek: 1 katalog, 2 daftar halaman, 3-4 font, lalu tiap halaman: halaman + isinya.
   const pageIds = pages.map((_, i) => 5 + i * 2);
@@ -64,18 +70,20 @@ function buildPdf(pages: { width: number; height: number; content: string }[]) {
     "<< /Type /Font /Subtype /Type1 /BaseFont /Courier >>",
   ];
   pages.forEach(({ width, height, content }, i) => {
+    const stream = deflateSync(Buffer.from(content, "latin1")).toString("latin1");
     objects.push(
       `<< /Type /Page /Parent 2 0 R /MediaBox [0 0 ${num(width)} ${num(height)}] /Resources << /Font << /F1 3 0 R /F2 4 0 R >> >> /Contents ${pageIds[i] + 1} 0 R >>`,
-      `<< /Length ${Buffer.byteLength(content)} >>\nstream\n${content}\nendstream`,
+      `<< /Length ${stream.length} /Filter /FlateDecode >>\nstream\n${stream}\nendstream`,
     );
   });
+  // Berkas disusun sebagai teks latin1 (1 karakter = 1 byte), termasuk stream biner.
   let pdf = "%PDF-1.4\n";
   const offsets = objects.map((body, i) => {
-    const at = Buffer.byteLength(pdf);
+    const at = pdf.length;
     pdf += `${i + 1} 0 obj\n${body}\nendobj\n`;
     return at;
   });
-  const xref = Buffer.byteLength(pdf);
+  const xref = pdf.length;
   pdf += `xref\n0 ${objects.length + 1}\n0000000000 65535 f \n`;
   pdf += offsets.map((o) => `${String(o).padStart(10, "0")} 00000 n \n`).join("");
   pdf += `trailer\n<< /Size ${objects.length + 1} /Root 1 0 R >>\nstartxref\n${xref}\n%%EOF\n`;

@@ -126,3 +126,48 @@ export interface LocationLookup extends Lookup {
 export interface InventoryProduct extends Product {
   out_total: number;
 }
+
+// Opname harian: satu baris per barang pada satu tanggal.
+export interface OpnameRow {
+  id: number;
+  sku: string;
+  name: string;
+  unit: string;
+  min_stock: number;
+  active: number;
+  category_name: string;
+  location_code: string;
+  block_code: string;
+  room_name: string | null;
+  /** Stok di awal hari (00.00). */
+  opening: number;
+  incoming: number;
+  outgoing: number;
+  /** Koreksi stok bertanda (+/-) pada hari itu. */
+  adjustment: number;
+  /** Sisa di akhir hari; untuk hari ini = stok sekarang. */
+  closing: number;
+  transactions: number;
+}
+export interface OpnameResult {
+  date: string;
+  items: OpnameRow[];
+  total: number;
+  moved: number;
+  outgoing_items: number;
+  incoming_items: number;
+  page: number;
+  limit: number;
+}
+
+// Barang yang bisa dipilih untuk print QR massal.
+export interface LabelCandidate {
+  id: number;
+  sku: string;
+  name: string;
+  category_name: string;
+  location_code: string;
+  block_code: string;
+  rack_number: number;
+  movement_class: Product["movement_class"];
+}

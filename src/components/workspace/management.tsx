@@ -191,9 +191,9 @@ export function HistoryPage({
           <option value="asc">Terlama / terkecil</option>
         </select>
         <Button asChild variant="outline">
-          <a href={"/api/history/" + type + "?" + params + "&export=csv"}>
+          <a href={"/api/history/" + type + "?" + params + "&export=xlsx"}>
             <Download />
-            CSV
+            Excel
           </a>
         </Button>
       </div>

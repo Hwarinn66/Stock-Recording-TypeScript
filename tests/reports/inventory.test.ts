@@ -3,7 +3,9 @@ import { test, after } from "node:test";
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import { db, rows, execute } from "../../src/lib/db";
-import { listProducts, csv } from "../../src/services/reports";
+import ExcelJS from "exceljs";
+import { listProducts } from "../../src/services/reports";
+import { productsWorkbook } from "../../src/services/exports";
 import { productListSchema } from "../../src/validators";
 if (!process.env.DB_NAME?.endsWith("_test"))
   throw new Error("Use a disposable *_test database");
@@ -188,7 +190,7 @@ test("inventory ordering uses manual labels independent of approved OUT quantiti
       ]),
     );
     await t.test(
-      "filters, pagination and CSV keep group ordering",
+      "filters, pagination and Excel export keep group ordering",
       async () => {
         const r = await query({
           sort: "fast",
@@ -202,16 +204,22 @@ test("inventory ordering uses manual labels independent of approved OUT quantiti
           sort: "fast",
           page: 2,
           limit: 1,
-          export: "csv",
+          export: "xlsx",
         });
         assert.deepEqual(names(all), ["Alpha", "Gamma", "Zeta"]);
-        const content = await csv(
-          all.items as unknown as Record<string, unknown>[],
-          ["name", "out_total", "movement_class"],
-          "test",
-        ).text();
-        assert.ok(content.indexOf("Alpha") < content.indexOf("Gamma"));
-        assert.ok(!content.includes("Beta"));
+        const wb = new ExcelJS.Workbook();
+        await wb.xlsx.load(
+          (await productsWorkbook(all.items, ["Fast moving"])) as unknown as ArrayBuffer,
+        );
+        const ws = wb.getWorksheet("Data Barang")!;
+        // Baris 1 judul, 2-3 keterangan, 4 kosong, 5 header, data mulai baris 6.
+        assert.equal(ws.getCell("C5").value, "Nama Barang");
+        assert.match(String(ws.getCell("A2").value), /^3 barang · Fast moving$/);
+        assert.deepEqual(
+          [6, 7, 8].map((r) => ws.getCell(`C${r}`).value),
+          ["Alpha", "Gamma", "Zeta"],
+        );
+        assert.equal(ws.getCell("A9").value, null);
       },
     );
     await t.test(
