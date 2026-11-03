@@ -5,7 +5,7 @@ import { ArrowLeft, Printer } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
-import type { LabelCandidate, LocationLookup, Lookup } from "@/types";
+import type { LabelCandidate, Lookup, UsedLocations } from "@/types";
 import { Heading, State, useData } from "./shared";
 
 const movements = [
@@ -37,8 +37,8 @@ export function LabelsPage() {
     "labels?" + params,
   );
   const categories = useData<Lookup[]>("categories");
-  const blocks = useData<LocationLookup[]>("blocks");
-  const racks = useData<LocationLookup[]>("racks");
+  // Hanya blok & rak yang berisi barang (blok kosong bawaan tiap ruangan tidak ditampilkan).
+  const places = useData<UsedLocations>("used-locations");
   // Filter berubah → semua barang hasil filter tercentang; hapus centang yang tidak dicetak.
   const [selected, setSelected] = useState<Set<number>>(new Set());
   useEffect(() => {
@@ -94,19 +94,19 @@ export function LabelsPage() {
             }}
           >
             <option value="">Semua blok</option>
-            {blocks.data?.map((b) => (
+            {places.data?.blocks.map((b) => (
               <option key={b.id} value={b.id}>
-                Blok {b.code}
+                {b.label} ({b.products} barang)
               </option>
             ))}
           </select>
           <select aria-label="Rak" value={rack} onChange={(e) => setRack(e.target.value)}>
             <option value="">Semua rak</option>
-            {racks.data
-              ?.filter((r) => !block || r.block_id === Number(block))
+            {places.data?.racks
+              .filter((r) => !block || r.block_id === Number(block))
               .map((r) => (
                 <option key={r.id} value={r.id}>
-                  Rak {r.code}
+                  {r.label} ({r.products} barang)
                 </option>
               ))}
           </select>

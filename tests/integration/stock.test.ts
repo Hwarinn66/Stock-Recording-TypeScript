@@ -1278,3 +1278,37 @@ test("print QR massal: filter blok/rak/pergerakan, PDF label urut lokasi", async
   const sheet = await labelsPdfFor(labelPdfSchema.parse({ ids: String(fast1), location: "0" }));
   assert.match(sheet.pdf.toString("latin1"), /\/MediaBox \[0 0 595\.276 841\.89\]/);
 });
+
+test("pilihan blok/rak filter: hanya yang berisi barang aktif, ruangan ditulis bila kode blok sama", async () => {
+  const { usedLocations } = await import("../../src/services/locations");
+  const labels = async () => {
+    const used = await usedLocations();
+    return {
+      blocks: used.blocks.filter((b) => b.code === "T").map((b) => b.label),
+      racks: used.racks.filter((r) => r.code.startsWith("T.")).map((r) => r.label),
+    };
+  };
+  // Ruangan lain dengan Blok T kosong (seperti Blok A–D bawaan tiap ruangan): tidak ikut.
+  const emptyRoom = (await mutateLocation("rooms", "POST", undefined, { name: "Ruangan Kosong" })).id!;
+  const emptyBlock = (await mutateLocation("blocks", "POST", undefined, { room_id: emptyRoom, code: "T", name: "Blok T" })).id!;
+  await mutateLocation("racks", "POST", undefined, { block_id: emptyBlock, rack_number: 1, name: "Rak 01" });
+  const before = await labels();
+  assert.deepEqual(before.blocks, ["Blok T"]);
+  assert.ok(before.racks.length > 0 && before.racks.every((r) => /^Rak T\.\d{2}$/.test(r)), before.racks.join());
+  const [{ racks: withProducts }] = await rows<{ racks: number }>(
+    "SELECT COUNT(DISTINCT l.rack_id) racks FROM products p JOIN locations l ON l.id=p.location_id JOIN racks r ON r.id=l.rack_id WHERE p.active=1 AND r.block_id=?",
+    [block],
+  );
+  assert.equal(before.racks.length, Number(withProducts), "rak kosong tidak ikut");
+  const all = (await usedLocations()).racks.map((r) => r.code);
+  assert.deepEqual(all, [...all].sort((a, b) => a.localeCompare(b, "en", { numeric: true })), "urut kode blok lalu nomor rak");
+  // Barang aktif di Blok T ruangan kedua: kedua blok diberi nama ruangannya.
+  const [{ id: secondRack }] = await rows<{ id: number }>("SELECT id FROM racks WHERE block_id=?", [emptyBlock]);
+  const moved = await createProduct({ sku: "BLK-T2", name: "Barang ruangan kedua", unit: "PCS", category_id: category, rack_id: secondRack, position_number: 1 });
+  const after = await labels();
+  assert.deepEqual(after.blocks, ["Blok T · Ruangan Kosong", "Blok T · Ruangan Test"]);
+  assert.ok(after.racks.includes("Rak T.01 · Ruangan Kosong"));
+  // Barang nonaktif tidak dihitung.
+  await editProduct(moved.id, { active: false });
+  assert.deepEqual((await labels()).blocks, ["Blok T"]);
+});

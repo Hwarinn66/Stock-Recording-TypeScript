@@ -9,6 +9,34 @@ export const hierarchyFields =
 export function locationCode(block: string, rack: number, position: number) {
   return `${block}.${String(rack).padStart(2, "0")}.${String(position).padStart(2, "0")}`;
 }
+/**
+ * Blok & rak yang berisi barang aktif, untuk pilihan filter (Opname, Print QR). Blok/rak
+ * kosong tidak ikut: tiap ruangan punya Blok A–D bawaan, sehingga "Blok A" bisa muncul
+ * berkali-kali. Kode blok yang sama di lebih dari satu ruangan diberi nama ruangannya.
+ */
+export async function usedLocations() {
+  const blocks = await rows<{ id: number; code: string; room_name: string; products: number }>(
+    `SELECT b.id,b.code,rm.name room_name,COUNT(*) products FROM products p JOIN locations l ON l.id=p.location_id${hierarchyJoins}
+     WHERE p.active=1 GROUP BY b.id,b.code,rm.name ORDER BY b.code,rm.name`,
+  );
+  const racks = await rows<{ id: number; block_id: number; rack_number: number; products: number }>(
+    `SELECT r.id,r.block_id,r.rack_number,COUNT(*) products FROM products p JOIN locations l ON l.id=p.location_id${hierarchyJoins}
+     WHERE p.active=1 GROUP BY r.id,r.block_id,r.rack_number,b.code,rm.name ORDER BY b.code,rm.name,r.rack_number`,
+  );
+  const shared = new Set(
+    blocks.filter((b, i) => blocks.findIndex((x) => x.code === b.code) !== i).map((b) => b.code),
+  );
+  const room = (b: (typeof blocks)[number]) => (shared.has(b.code) ? ` · ${b.room_name}` : "");
+  const byId = new Map(blocks.map((b) => [b.id, b]));
+  return {
+    blocks: blocks.map((b) => ({ ...b, products: Number(b.products), label: `Blok ${b.code}${room(b)}` })),
+    racks: racks.map((r) => {
+      const b = byId.get(r.block_id)!;
+      const code = `${b.code}.${String(r.rack_number).padStart(2, "0")}`;
+      return { ...r, products: Number(r.products), code, label: `Rak ${code}${room(b)}` };
+    }),
+  };
+}
 export async function listLocations(kind: LocationKind) {
   if (kind === "rooms") return rows("SELECT * FROM rooms ORDER BY name");
   if (kind === "blocks")

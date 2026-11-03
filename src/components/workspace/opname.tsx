@@ -6,7 +6,7 @@ import { useLive } from "@/hooks/use-live";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
-import type { LocationLookup, Lookup, OpnameResult } from "@/types";
+import type { Lookup, OpnameResult, UsedLocations } from "@/types";
 import { Heading, Pager, State, StockBadge, useData } from "./shared";
 
 const LIMIT = 50;
@@ -55,7 +55,8 @@ export function OpnamePage() {
   });
   const list = useData<OpnameResult>("opname?" + params, version);
   const categories = useData<Lookup[]>("categories");
-  const blocks = useData<LocationLookup[]>("blocks");
+  // Hanya blok yang berisi barang (blok kosong bawaan tiap ruangan tidak ditampilkan).
+  const places = useData<UsedLocations>("used-locations");
   const reset = (fn: () => void) => {
     fn();
     setPage(1);
@@ -115,9 +116,9 @@ export function OpnamePage() {
             onChange={(e) => reset(() => setBlock(e.target.value))}
           >
             <option value="">Semua blok</option>
-            {blocks.data?.map((b) => (
+            {places.data?.blocks.map((b) => (
               <option key={b.id} value={b.id}>
-                Blok {b.code}
+                {b.label}
               </option>
             ))}
           </select>

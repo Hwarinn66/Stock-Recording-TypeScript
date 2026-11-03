@@ -160,6 +160,12 @@ export interface OpnameResult {
   limit: number;
 }
 
+// Pilihan filter blok/rak yang berisi barang aktif (GET /api/used-locations).
+export interface UsedLocations {
+  blocks: { id: number; code: string; room_name: string; products: number; label: string }[];
+  racks: { id: number; block_id: number; rack_number: number; code: string; products: number; label: string }[];
+}
+
 // Barang yang bisa dipilih untuk print QR massal.
 export interface LabelCandidate {
   id: number;

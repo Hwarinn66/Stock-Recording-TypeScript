@@ -1,4 +1,4 @@
-import { listLocations, mutateLocation } from "@/services/locations";
+import { listLocations, mutateLocation, usedLocations } from "@/services/locations";
 import { z } from "zod";
 import QRCode from "qrcode";
 import { labelPdf } from "@/lib/label-pdf";
@@ -428,6 +428,9 @@ async function handler(req: Request, { params }: Context) {
         app_url: process.env.APP_URL,
         cookie_secure: process.env.COOKIE_SECURE === "true",
       });
+    // Pilihan filter blok/rak: hanya yang berisi barang aktif.
+    if (resource === "used-locations" && !key && method === "GET")
+      return ok(await usedLocations());
     const masters = {
       rooms: schemas.roomSchema,
       blocks: schemas.blockSchema,
