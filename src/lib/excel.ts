@@ -189,12 +189,13 @@ export function styleHeader(row: ExcelJS.Row) {
 /**
  * Tabel rapi: judul, header hijau tebal, kolom selebar isinya, baris belang tipis,
  * header & kolom kiri dibekukan, filter di setiap header, siap cetak landscape.
+ * Tanpa `title` = hanya tabel (header di baris 1), tanpa tulisan lain maupun footer cetak.
  */
 export function writeTable<T>(
   ws: ExcelJS.Worksheet,
   options: {
-    title: string;
-    subtitle: string[];
+    title?: string;
+    subtitle?: string[];
     columns: Column<T>[];
     rows: T[];
     /** Jumlah kolom kiri yang dibekukan saat digeser ke kanan. */
@@ -203,12 +204,10 @@ export function writeTable<T>(
 ) {
   const { columns, rows } = options;
   columns.forEach((c, i) => (ws.getColumn(i + 1).width = c.width));
-  const headerRow = writeHeading(
-    ws,
-    columns.length,
-    options.title,
-    options.subtitle,
-  );
+  const headerRow =
+    options.title === undefined
+      ? 1
+      : writeHeading(ws, columns.length, options.title, options.subtitle ?? []);
   const header = ws.getRow(headerRow);
   columns.forEach((c, i) => (header.getCell(i + 1).value = c.header));
   styleHeader(header);
@@ -261,7 +260,8 @@ export function writeTable<T>(
       footer: 0.3,
     },
   };
-  ws.headerFooter = { oddFooter: "&L&8&A&R&8Halaman &P dari &N" };
+  if (options.title !== undefined)
+    ws.headerFooter = { oddFooter: "&L&8&A&R&8Halaman &P dari &N" };
   return headerRow;
 }
 /** Tanggal & jam untuk teks keterangan, mis. "Senin, 26 Okt 2026 14.30 WIB". */

@@ -209,17 +209,16 @@ test("inventory ordering uses manual labels independent of approved OUT quantiti
         assert.deepEqual(names(all), ["Alpha", "Gamma", "Zeta"]);
         const wb = new ExcelJS.Workbook();
         await wb.xlsx.load(
-          (await productsWorkbook(all.items, ["Fast moving"])) as unknown as ArrayBuffer,
+          (await productsWorkbook(all.items)) as unknown as ArrayBuffer,
         );
         const ws = wb.getWorksheet("Data Barang")!;
-        // Baris 1 judul, 2-3 keterangan, 4 kosong, 5 header, data mulai baris 6.
-        assert.equal(ws.getCell("C5").value, "Nama Barang");
-        assert.match(String(ws.getCell("A2").value), /^3 barang · Fast moving$/);
+        // Hanya tabel: header di baris 1, data mulai baris 2.
+        assert.equal(ws.getCell("C1").value, "Nama Barang");
         assert.deepEqual(
-          [6, 7, 8].map((r) => ws.getCell(`C${r}`).value),
+          [2, 3, 4].map((r) => ws.getCell(`C${r}`).value),
           ["Alpha", "Gamma", "Zeta"],
         );
-        assert.equal(ws.getCell("A9").value, null);
+        assert.equal(ws.rowCount, 4);
       },
     );
     await t.test(

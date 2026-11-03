@@ -145,7 +145,7 @@ export interface OpnameRow {
   outgoing: number;
   /** Koreksi stok bertanda (+/-) pada hari itu. */
   adjustment: number;
-  /** Sisa di akhir hari; untuk hari ini = stok sekarang. */
+  /** Stok akhir hari; untuk hari ini = stok sekarang. */
   closing: number;
   transactions: number;
 }

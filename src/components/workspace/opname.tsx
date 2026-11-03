@@ -67,7 +67,7 @@ export function OpnamePage() {
     <>
       <Heading
         title="Opname harian"
-        description="Per barang pada tanggal yang dipilih (jam WIB): stok awal, masuk, keluar, koreksi, dan sisa. Sisa hari ini = stok sekarang. Cocokkan kolom Sisa dengan hitungan fisik di rak."
+        description="Per barang pada tanggal yang dipilih (jam WIB): stok awal, masuk, keluar, koreksi, dan stok akhir. Stok akhir hari ini = stok sekarang. Cocokkan kolom Stok akhir dengan hitungan fisik di rak."
       >
         <Button variant="outline" asChild>
           <a href={"/api/opname?" + params + "&export=xlsx"}>
@@ -158,7 +158,7 @@ export function OpnamePage() {
           <table className="w-full">
             <thead>
               <tr>
-                {["Kode Barang", "Nama Barang", "Lokasi", "Stok awal", "Masuk", "Keluar", "Koreksi", "Sisa", "Satuan", "Status"].map(
+                {["Kode Barang", "Nama Barang", "Lokasi", "Stok awal", "Masuk", "Keluar", "Koreksi", "Stok akhir", "Satuan", "Status"].map(
                   (h) => (
                     <th key={h}>{h}</th>
                   ),

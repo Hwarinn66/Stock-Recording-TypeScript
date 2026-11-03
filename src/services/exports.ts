@@ -1,83 +1,22 @@
-import { rows } from "@/lib/db";
 import { stockLabel } from "@/lib/stock";
-import {
-  colors,
-  describeTime,
-  newWorkbook,
-  toBuffer,
-  writeTable,
-  type Column,
-} from "@/lib/excel";
+import { colors, newWorkbook, toBuffer, writeTable, type Column } from "@/lib/excel";
 import { historyColumns, movementLabel } from "./excel-backup";
 import type { InventoryProduct, OpnameRow, StockTransaction } from "@/types";
 
-// Unduhan Excel dari web (data barang, riwayat, opname harian): gaya sama dengan Excel
-// cadangan — judul & keterangan filter, header hijau, kolom selebar isinya, tanggal & jam
-// zona aplikasi (WIB) sebagai nilai tanggal Excel, kode barang & no reservasi tetap teks.
+// Unduhan Excel dari web (data barang, riwayat, opname harian): hanya tabel (header di
+// baris 1, tanpa judul/keterangan di luar tabel), gaya sama dengan Excel cadangan —
+// header hijau, kolom selebar isinya, tanggal & jam zona aplikasi (WIB) sebagai nilai
+// tanggal Excel, kode barang & no reservasi tetap teks.
 const stockTone = {
   "STOK HABIS": "bad",
   "STOK MENIPIS": "warn",
   AMAN: "good",
 } as const;
 
-/** Filter yang dipakai saat mengunduh, dalam kata-kata (baris keterangan file). */
-export async function describeFilters(f: {
-  q?: string;
-  category_id?: number;
-  block_id?: number;
-  room_id?: number;
-  rack_id?: number;
-  location_id?: number;
-  product_id?: number;
-  stock?: "low" | "zero" | "safe";
-  active?: "0" | "1" | "all";
-  sort?: string;
-  status?: "PENDING" | "APPROVED" | "CANCELLED";
-  from?: string;
-  to?: string;
-}) {
-  const name = async (sql: string, id?: number) =>
-    id ? ((await rows<{ v: string }>(sql, [id]))[0]?.v ?? `#${id}`) : null;
-  const date = (d: string) => d.split("-").reverse().join("/");
-  const parts = [
-    f.active && { "1": "barang aktif", "0": "barang nonaktif", all: "barang aktif & nonaktif" }[f.active],
-    f.stock && { low: "stok menipis", zero: "stok habis", safe: "stok aman" }[f.stock],
-    f.sort &&
-      {
-        fast: "Fast moving",
-        slow: "Slow moving",
-        dead: "Dead stock",
-        unlabelled: "belum diberi label",
-      }[f.sort],
-    ...(await Promise.all([
-      name("SELECT name v FROM categories WHERE id=?", f.category_id).then((v) => v && `kategori ${v}`),
-      name("SELECT name v FROM rooms WHERE id=?", f.room_id).then((v) => v && `ruangan ${v}`),
-      name("SELECT code v FROM blocks WHERE id=?", f.block_id).then((v) => v && `blok ${v}`),
-      name(
-        "SELECT CONCAT(b.code,'.',LPAD(r.rack_number,2,'0')) v FROM racks r JOIN blocks b ON b.id=r.block_id WHERE r.id=?",
-        f.rack_id,
-      ).then((v) => v && `rak ${v}`),
-      name("SELECT code v FROM locations WHERE id=?", f.location_id).then((v) => v && `posisi ${v}`),
-      name("SELECT sku v FROM products WHERE id=?", f.product_id).then((v) => v && `barang ${v}`),
-    ])),
-    f.status && { APPROVED: "status selesai", PENDING: "status menunggu", CANCELLED: "status dibatalkan" }[f.status],
-    f.from && f.to
-      ? `tanggal ${date(f.from)} – ${date(f.to)}`
-      : f.from
-        ? `sejak ${date(f.from)}`
-        : f.to && `sampai ${date(f.to)}`,
-    f.q && `pencarian "${f.q}"`,
-  ];
-  return parts.filter((p): p is string => !!p);
-}
-
 type Numbered<T> = T & { no: number };
 const numbered = <T>(items: T[]) => items.map((item, i) => ({ ...item, no: i + 1 }));
-/** Keterangan baris kedua: jumlah data, filter yang dipakai, dan waktu unduh. */
-const subtitle = (count: string, filters: string[]) => [
-  [count, ...filters].join(" · "),
-  `Diunduh ${describeTime(new Date())}`,
-];
+const sheet = (wb: ReturnType<typeof newWorkbook>, name: string) =>
+  wb.addWorksheet(name, { properties: { tabColor: { argb: colors.brand } } });
 
 const productColumns: Column<Numbered<InventoryProduct>>[] = [
   { header: "No", width: 6, kind: "integer", value: (p) => p.no },
@@ -118,35 +57,32 @@ const productColumns: Column<Numbered<InventoryProduct>>[] = [
   },
 ];
 
-export async function productsWorkbook(items: InventoryProduct[], filters: string[]) {
+export async function productsWorkbook(items: InventoryProduct[]) {
   const wb = newWorkbook();
-  writeTable(
-    wb.addWorksheet("Data Barang", { properties: { tabColor: { argb: colors.brand } } }),
-    {
-      title: "DATA BARANG",
-      subtitle: subtitle(`${items.length} barang`, filters),
-      columns: productColumns,
-      rows: numbered(items),
-      freezeColumns: 3,
-    },
-  );
+  writeTable(sheet(wb, "Data Barang"), {
+    columns: productColumns,
+    rows: numbered(items),
+    freezeColumns: 3,
+  });
   return toBuffer(wb);
 }
 
 export type HistoryKind = "all" | "in" | "out" | "adjustments" | "reservations";
-const historyTitles: Record<HistoryKind, string> = {
-  all: "RIWAYAT SEMUA TRANSAKSI",
-  in: "RIWAYAT BARANG MASUK",
-  out: "RIWAYAT BARANG KELUAR",
-  adjustments: "RIWAYAT KOREKSI STOK",
-  reservations: "RIWAYAT NO RESERVASI (BARANG KELUAR)",
+const historySheets: Record<HistoryKind, string> = {
+  all: "Riwayat",
+  in: "Barang Masuk",
+  out: "Barang Keluar",
+  adjustments: "Koreksi Stok",
+  reservations: "No Reservasi",
+};
+// Unduhan web memakai istilah Stok Awal / Stok Akhir. Excel cadangan & Excel live tetap
+// "Stok Sebelum/Sesudah" agar query Excel live yang sudah terpasang tidak rusak.
+const historyHeaders: Record<string, string> = {
+  "Stok Sebelum": "Stok Awal",
+  "Stok Sesudah": "Stok Akhir",
 };
 
-export async function historyWorkbook(
-  kind: HistoryKind,
-  items: StockTransaction[],
-  filters: string[],
-) {
+export async function historyWorkbook(kind: HistoryKind, items: StockTransaction[]) {
   // Tab No reservasi: no reservasi di kolom pertama. Kolom yang selalu kosong untuk
   // jenis transaksi itu tidak ikut (mis. kode masuk pada barang keluar).
   const reservation = historyColumns.find((c) => c.header === "No Reservasi")!;
@@ -160,18 +96,13 @@ export async function historyWorkbook(
   const columns = [
     ...(kind === "reservations" ? [reservation] : []),
     ...historyColumns.filter((c) => !skip[kind].includes(c.header)),
-  ];
+  ].map((c) => (historyHeaders[c.header] ? { ...c, header: historyHeaders[c.header] } : c));
   const wb = newWorkbook();
-  writeTable(
-    wb.addWorksheet("Riwayat", { properties: { tabColor: { argb: colors.brand } } }),
-    {
-      title: historyTitles[kind],
-      subtitle: subtitle(`${items.length} transaksi`, filters),
-      columns,
-      rows: items,
-      freezeColumns: 1,
-    },
-  );
+  writeTable(sheet(wb, historySheets[kind]), {
+    columns,
+    rows: items,
+    freezeColumns: 1,
+  });
   return toBuffer(wb);
 }
 
@@ -204,7 +135,7 @@ const opnameColumns: Column<Numbered<OpnameRow>>[] = [
     value: (r) => r.adjustment || null,
     tone: (r) => (r.adjustment ? "accent" : undefined),
   },
-  { header: "Sisa", width: 11, kind: "quantity", value: (r) => r.closing },
+  { header: "Stok Akhir", width: 11, kind: "quantity", value: (r) => r.closing },
   {
     header: "Status Stok",
     width: 15,
@@ -215,32 +146,13 @@ const opnameColumns: Column<Numbered<OpnameRow>>[] = [
   { header: "Transaksi", width: 10, kind: "integer", value: (r) => r.transactions || null },
 ];
 
-export async function opnameWorkbook(
-  day: string,
-  items: OpnameRow[],
-  filters: string[],
-) {
-  const [y, m, d] = day.split("-").map(Number);
-  const date = new Intl.DateTimeFormat("id-ID", {
-    timeZone: "UTC",
-    weekday: "long",
-    day: "numeric",
-    month: "long",
-    year: "numeric",
-  }).format(new Date(Date.UTC(y, m - 1, d)));
+/** Tanggal opname ada di nama sheet ("Opname 03-11-2026") dan nama file, bukan di sel. */
+export async function opnameWorkbook(day: string, items: OpnameRow[]) {
   const wb = newWorkbook();
-  writeTable(
-    wb.addWorksheet("Opname", { properties: { tabColor: { argb: colors.brand } } }),
-    {
-      title: `OPNAME HARIAN · ${date.toUpperCase()}`,
-      subtitle: [
-        ...subtitle(`${items.length} barang`, filters),
-        "Sisa = Stok Awal + Masuk − Keluar ± Koreksi. Kosong = tidak ada transaksi.",
-      ],
-      columns: opnameColumns,
-      rows: numbered(items),
-      freezeColumns: 3,
-    },
-  );
+  writeTable(sheet(wb, `Opname ${day.split("-").reverse().join("-")}`), {
+    columns: opnameColumns,
+    rows: numbered(items),
+    freezeColumns: 3,
+  });
   return toBuffer(wb);
 }

@@ -302,10 +302,7 @@ async function handler(req: Request, { params }: Context) {
           result = await listProducts(f);
         return f.export
           ? xlsxResponse(
-              await excelExports.productsWorkbook(
-                result.items,
-                await excelExports.describeFilters(f),
-              ),
+              await excelExports.productsWorkbook(result.items),
               `data-barang-${localDay()}.xlsx`,
             )
           : ok(result);
@@ -387,16 +384,12 @@ async function handler(req: Request, { params }: Context) {
       const kind = key as excelExports.HistoryKind;
       return f.export
         ? xlsxResponse(
-            await excelExports.historyWorkbook(
-              kind,
-              result.items,
-              await excelExports.describeFilters(f),
-            ),
+            await excelExports.historyWorkbook(kind, result.items),
             `riwayat-${files[kind]}-${localDay()}.xlsx`,
           )
         : ok(result);
     }
-    // Opname harian: stok awal, masuk, keluar, koreksi, sisa per barang pada satu tanggal.
+    // Opname harian: stok awal, masuk, keluar, koreksi, stok akhir per barang pada satu tanggal.
     if (resource === "opname" && !key && method === "GET") {
       const f = schemas.opnameSchema.parse(
           Object.fromEntries(url.searchParams),
@@ -404,10 +397,7 @@ async function handler(req: Request, { params }: Context) {
         result = await opname(f);
       return f.export
         ? xlsxResponse(
-            await excelExports.opnameWorkbook(result.date, result.items, [
-              f.all === "1" ? "semua barang aktif" : "barang yang ada transaksi",
-              ...(await excelExports.describeFilters(f)),
-            ]),
+            await excelExports.opnameWorkbook(result.date, result.items),
             `opname-${result.date}.xlsx`,
           )
         : ok(result);

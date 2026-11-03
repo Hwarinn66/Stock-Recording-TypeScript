@@ -10,7 +10,7 @@ const base = process.env.TEST_BASE_URL || "http://127.0.0.1:3000";
 const username = "http-" + randomUUID().slice(0, 8),
   password = randomUUID();
 let cookie = "";
-/** Unduhan Excel → isi sheet pertama per baris (baris 5 = header tabel). */
+/** Unduhan Excel → isi sheet pertama per baris (hanya tabel: baris 1 = header, data mulai baris 2). */
 async function excelRows(response: Response) {
   assert.equal(response.status, 200);
   assert.match(response.headers.get("content-type") || "", /spreadsheetml/);
@@ -253,9 +253,9 @@ try {
   ).json();
   assert.equal(history.data.items[0].stock_after, 10);
   const productsXlsx = await excelRows(await request("products?export=xlsx&q=" + username));
-  assert.equal(productsXlsx[1][0], "DATA BARANG");
-  assert.deepEqual(productsXlsx[5].slice(0, 3), ["No", "Kode Barang", "Nama Barang"]);
-  assert.equal(productsXlsx[6][1], username);
+  assert.deepEqual(productsXlsx[1].slice(0, 3), ["No", "Kode Barang", "Nama Barang"]);
+  assert.equal(productsXlsx[2][1], username);
+  assert.equal(productsXlsx.length, 3, "tidak ada tulisan di luar tabel");
   assert.equal((await request("products?export=csv")).status, 422, "CSV diganti Excel");
   assert.equal(
     (
@@ -271,8 +271,7 @@ try {
   assert.equal(fastList.data.total, 1);
   assert.equal(fastList.data.items[0].out_total, 0);
   const fastXlsx = await excelRows(await request("products?sort=fast&export=xlsx&q=" + username));
-  assert.match(String(fastXlsx[2][0]), /^1 barang · barang aktif · Fast moving · pencarian/);
-  assert.equal(fastXlsx[6][fastXlsx[5].indexOf("Pergerakan")], "Fast moving");
+  assert.equal(fastXlsx[2][fastXlsx[1].indexOf("Pergerakan")], "Fast moving");
   assert.equal(
     (
       await request("products/" + product.id, "PATCH", {
@@ -342,8 +341,9 @@ try {
   const reservationXlsx = await excelRows(
     await request("history/reservations?export=xlsx&q=0012345"),
   );
-  assert.deepEqual(reservationXlsx[5].slice(0, 2), ["No Reservasi", "No Transaksi"]);
-  assert.equal(reservationXlsx[6][0], "0012345");
+  assert.deepEqual(reservationXlsx[1].slice(0, 2), ["No Reservasi", "No Transaksi"]);
+  assert.equal(reservationXlsx[2][0], "0012345");
+  assert.ok(reservationXlsx[1].includes("Stok Awal") && reservationXlsx[1].includes("Stok Akhir"));
   // Opname harian: barang ini masuk 10 lalu keluar 4 hari ini, sisa 6.
   const opnameToday = await (await request("opname?q=" + username)).json();
   assert.deepEqual(
@@ -351,9 +351,8 @@ try {
     [0, 10, 4, 6],
   );
   const opnameXlsx = await excelRows(await request("opname?export=xlsx&q=" + username));
-  assert.match(String(opnameXlsx[1][0]), /^OPNAME HARIAN · /);
-  // Opname: 3 baris keterangan (termasuk rumus Sisa), header di baris 6.
-  assert.equal(opnameXlsx[7][opnameXlsx[6].indexOf("Sisa")], 6);
+  assert.equal(opnameXlsx[1][0], "No");
+  assert.equal(opnameXlsx[2][opnameXlsx[1].indexOf("Stok Akhir")], 6);
   assert.equal((await request("opname?date=2999-01-01")).status, 422);
   // Print QR massal: daftar barang sesuai filter (barang ini Slow moving), lalu PDF label.
   const labelList = await (await request("labels?movement=SLOW&q=" + username)).json();

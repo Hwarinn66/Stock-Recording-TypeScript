@@ -9,7 +9,7 @@ import type { OpnameRow } from "@/types";
 type Filters = z.infer<typeof opnameSchema>;
 
 // Opname harian per barang pada satu tanggal (jam dinding zona aplikasi, default WIB):
-// Sisa = stok sekarang dikurangi perubahan stok setelah tanggal itu; Stok awal = Sisa
+// Stok akhir = stok sekarang dikurangi perubahan stok setelah tanggal itu; Stok awal = stok akhir
 // dikurangi perubahan pada tanggal itu. Hanya transaksi selesai (APPROVED) yang mengubah
 // stok, dihitung menurut waktu kejadian (approved_at; antrean offline & buku darurat
 // memakai waktu aslinya), sama seperti IN/OUT hari ini di dashboard.
