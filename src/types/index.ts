@@ -41,6 +41,8 @@ export interface StockTransaction {
   cancelled_at: string | null;
   notes: string | null;
   reservation_number: string | null;
+  /** Sesi reservasi HP tempat barang ini diambil (NULL = transaksi lama / buku darurat). */
+  reservation_id?: number | null;
   in_code?: string | null;
   client_ref?: string | null;
   actor_name: string | null;
@@ -48,6 +50,47 @@ export interface StockTransaction {
   sku: string;
   unit: string;
   stock: number;
+}
+/** Sesi pengambilan barang per no reservasi (aplikasi HP). */
+export interface Reservation {
+  id: number;
+  reservation_number: string;
+  /** Jumlah jenis barang yang harus diambil. */
+  total_items: number;
+  /** Jumlah jenis barang yang sudah diambil. */
+  taken: number;
+  status: "OPEN" | "DONE";
+  created_by_name: string | null;
+  created_at: string;
+  completed_at: string | null;
+  last_activity: string | null;
+}
+/** Satu baris riwayat reservasi di dashboard (field sesi null = reservasi lama tanpa sesi). */
+export interface ReservationHistoryRow {
+  reservation_number: string;
+  /** Jumlah jenis barang yang sudah diambil dengan no reservasi ini. */
+  item_count: number;
+  last_scan: string | null;
+  actors: string | null;
+  total_items: number | null;
+  taken: number | null;
+  status: "OPEN" | "DONE" | null;
+  created_at: string | null;
+  completed_at: string | null;
+}
+export interface ReservationItem {
+  id: number;
+  transaction_number: string;
+  product_id: number;
+  sku: string;
+  name: string;
+  unit: string;
+  quantity: number;
+  location_code: string;
+  scanned_at: string;
+  actor_name: string | null;
+  /** Detail dashboard: false = barang keluar lama / dari luar sesi reservasi HP. */
+  in_session?: boolean;
 }
 export interface Lookup {
   id: number;

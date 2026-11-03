@@ -45,6 +45,7 @@ let rack: number;
 before(async () => {
   await execute("DELETE FROM stock_events");
   await execute("DELETE FROM stock_transactions");
+  await execute("DELETE FROM reservations");
   await execute("DELETE FROM products");
   await execute("DELETE FROM locations");
   await execute("DELETE FROM racks");
@@ -941,5 +942,130 @@ test("buku darurat Excel: pratinjau, simpan, unggah ulang aman", async (t) => {
     assert.equal(data.products.find((p) => p.sku === "DRT-KG")?.stock, 10.25);
     assert.ok(data.history.some((h) => h.notes?.startsWith("Buku darurat No 2")));
     assert.ok((await toBuffer(buildBackupWorkbook(data))).length > 5000);
+  });
+});
+
+test("sesi reservasi HP: total item, barang dobel ditolak, selesai otomatis, lanjut & revisi", async (t) => {
+  const {
+    createReservation,
+    getReservation,
+    setReservationTotal,
+    reservationHistory,
+    reservationHistoryDetail,
+  } = await import("../../src/services/reservations");
+  const make = async (sku: string, position: number) => {
+    const id = (
+      await createProduct({ sku, name: `Barang ${sku}`, unit: "PCS", category_id: category, rack_id: rack, position_number: position })
+    ).id;
+    const [{ qr_token }] = await rows<{ qr_token: string }>("SELECT qr_token FROM products WHERE id=?", [id]);
+    await record({ qr_token, mode: "IN", in_code: "111.22.33", quantity: 50 }, user);
+    return { id, qr_token };
+  };
+  const [a, b, c, d, e] = await Promise.all(
+    ["RSV-A", "RSV-B", "RSV-C", "RSV-D", "RSV-E"].map((sku, i) => make(sku, 91 + i)),
+  );
+  const take = (qr_token: string, number: string, total = 3, extra: Record<string, unknown> = {}) =>
+    record({ qr_token, mode: "OUT", quantity: 2, reservation_number: number, reservation_total: total, ...extra }, user);
+  const stockOf = async (id: number) =>
+    (await rows<{ stock: number }>("SELECT stock FROM products WHERE id=?", [id]))[0].stock;
+
+  await t.test("scan sampai total item, barang sama ditolak, lalu selesai", async () => {
+    const started = await createReservation({ reservation_number: "7000001", total_items: 3 }, user);
+    assert.deepEqual([started.taken, started.total_items, started.status, started.items.length], [0, 3, "OPEN", 0]);
+    await assert.rejects(createReservation({ reservation_number: "7000001", total_items: 5 }, user), { code: "RESERVATION_EXISTS" });
+    assert.deepEqual((await take(a.qr_token, "7000001")).reservation, { reservation_number: "7000001", total_items: 3, taken: 1, status: "OPEN" });
+    await assert.rejects(take(a.qr_token, "7000001"), { code: "RESERVATION_DUPLICATE" });
+    assert.equal(await stockOf(a.id), 48, "scan dobel tidak mengurangi stok");
+    assert.equal((await take(b.qr_token, "7000001")).reservation?.taken, 2);
+    const last = await take(c.qr_token, "7000001");
+    assert.deepEqual([last.reservation?.taken, last.reservation?.status], [3, "DONE"]);
+    await assert.rejects(take(d.qr_token, "7000001"), { code: "RESERVATION_DONE" });
+    assert.equal(await stockOf(d.id), 50);
+    const done = await getReservation("7000001");
+    assert.equal(done.status, "DONE");
+    assert.ok(done.completed_at);
+    assert.deepEqual(done.items.map((i) => i.sku), ["RSV-A", "RSV-B", "RSV-C"]);
+  });
+
+  await t.test("ubah total: tidak kurang dari yang sudah diambil, buka lagi bila ditambah", async () => {
+    await assert.rejects(setReservationTotal("7000001", 2), { code: "RESERVATION_TOTAL_TOO_SMALL" });
+    const reopened = await setReservationTotal("7000001", 4);
+    assert.deepEqual([reopened.status, reopened.completed_at, reopened.taken], ["OPEN", null, 3]);
+    assert.equal((await take(d.qr_token, "7000001")).reservation?.status, "DONE");
+    await assert.rejects(getReservation("7999999"), { code: "RESERVATION_NOT_FOUND" });
+  });
+
+  await t.test("sesi dimulai saat HP offline: reservasi dibuat dari transaksi pertama", async () => {
+    const at = new Date(Date.now() - 3600000);
+    const r = await take(a.qr_token, "7000002", 2, { client_ref: randomUUID(), recorded_at: at.toISOString() });
+    assert.deepEqual(r.reservation, { reservation_number: "7000002", total_items: 2, taken: 1, status: "OPEN" });
+    const created = await getReservation("7000002");
+    assert.equal(created.created_at.slice(0, 19), sqlDateTime(at));
+    // Total dari HP lain diabaikan: total di server yang berlaku.
+    assert.equal((await take(b.qr_token, "7000002", 9)).reservation?.status, "DONE");
+  });
+
+  await t.test("kirim ulang menjawab progres; HP lama (tanpa total) tidak ikut sesi", async () => {
+    await createReservation({ reservation_number: "7000003", total_items: 2 }, user);
+    const ref = randomUUID();
+    await take(e.qr_token, "7000003", 2, { client_ref: ref });
+    const again = await take(e.qr_token, "7000003", 2, { client_ref: ref });
+    assert.equal(again.replayed, true);
+    assert.deepEqual(again.reservation, { reservation_number: "7000003", total_items: 2, taken: 1, status: "OPEN" });
+    const legacy = await record({ qr_token: a.qr_token, mode: "OUT", quantity: 1, reservation_number: "7000003" }, user);
+    assert.equal(legacy.reservation, null);
+    assert.equal((await getReservation("7000003")).taken, 1);
+  });
+
+  await t.test("revisi no reservasi melepas barang dari sesi dan membuka lagi", async () => {
+    const [tx] = await rows<{ id: number }>(
+      "SELECT t.id FROM stock_transactions t JOIN reservations r ON r.id=t.reservation_id WHERE r.reservation_number='7000002' ORDER BY t.id DESC LIMIT 1",
+    );
+    await revise(tx.id, { reservation_number: "7000009" }, { id: user, username: "test" });
+    const after = await getReservation("7000002");
+    assert.deepEqual([after.taken, after.status, after.completed_at], [1, "OPEN", null]);
+  });
+
+  await t.test("scan bersamaan di satu reservasi tidak melebihi total", async () => {
+    await createReservation({ reservation_number: "7000004", total_items: 2 }, user);
+    const results = await Promise.allSettled([b, c, d].map((p) => take(p.qr_token, "7000004", 2)));
+    assert.equal(results.filter((r) => r.status === "fulfilled").length, 2);
+    const rejected = results.find((r) => r.status === "rejected") as PromiseRejectedResult;
+    assert.equal(rejected.reason.code, "RESERVATION_DONE");
+    const done = await getReservation("7000004");
+    assert.deepEqual([done.taken, done.status], [2, "DONE"]);
+  });
+
+  await t.test("riwayat reservasi dashboard: per no reservasi, termasuk barang keluar tanpa sesi", async () => {
+    // 7000009 = no reservasi hasil revisi (tanpa sesi), 7000001–7000004 = sesi HP.
+    const all = await reservationHistory({ q: "70000", page: 1, limit: 20 });
+    assert.equal(all.total, 5);
+    assert.deepEqual(all.items.map((r) => r.reservation_number).sort(), ["7000001", "7000002", "7000003", "7000004", "7000009"]);
+    const byNumber = Object.fromEntries(all.items.map((r) => [r.reservation_number, r]));
+    assert.deepEqual(
+      [byNumber["7000001"].item_count, byNumber["7000001"].taken, byNumber["7000001"].total_items, byNumber["7000001"].status],
+      [4, 4, 4, "DONE"],
+    );
+    assert.deepEqual(
+      [byNumber["7000009"].item_count, byNumber["7000009"].taken, byNumber["7000009"].status],
+      [1, null, null],
+    );
+    assert.match(byNumber["7000003"].actors ?? "", /./);
+    const open = await reservationHistory({ q: "70000", status: "OPEN", page: 1, limit: 20 });
+    assert.deepEqual(open.items.map((r) => r.reservation_number).sort(), ["7000002", "7000003"]);
+    const bySku = await reservationHistory({ q: "RSV-E", page: 1, limit: 20 });
+    assert.deepEqual(bySku.items.map((r) => r.reservation_number), ["7000003"]);
+
+    // Klik reservasi: semua barang yang diambil dengan nomor itu, ditandai dalam/luar sesi.
+    const detail = await reservationHistoryDetail("7000003");
+    assert.equal(detail.session?.taken, 1);
+    assert.deepEqual(
+      detail.items.map((i) => [i.sku, i.in_session]),
+      [["RSV-E", true], ["RSV-A", false]],
+    );
+    const legacy = await reservationHistoryDetail("7000009");
+    assert.equal(legacy.session, null);
+    assert.deepEqual(legacy.items.map((i) => i.sku), ["RSV-B"]);
+    await assert.rejects(reservationHistoryDetail("7999999"), { code: "RESERVATION_NOT_FOUND" });
   });
 });

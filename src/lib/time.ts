@@ -63,3 +63,17 @@ export function sqlDateTime(date: Date) {
 export function fromSqlDateTime(value: string) {
   return new Date(value.replace(" ", "T") + "Z");
 }
+/** Filter tanggal "2026-10-26" → batas UTC tengah malam di zona aplikasi (termasuk DST); next = hari berikutnya. */
+export function dateBoundary(day: string, next = false) {
+  const [year, month, date] = day.split("-").map(Number);
+  return sqlDateTime(
+    zonedToUtc({
+      year,
+      month,
+      day: date + (next ? 1 : 0),
+      hour: 0,
+      minute: 0,
+      second: 0,
+    }),
+  );
+}

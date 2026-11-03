@@ -7,7 +7,9 @@ import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:warehouse_scanner/api.dart';
+import 'package:warehouse_scanner/reservation.dart';
 import 'package:warehouse_scanner/screens/quantity_screen.dart';
+import 'package:warehouse_scanner/screens/reservation_screen.dart';
 import 'package:warehouse_scanner/screens/scan_screen.dart';
 import 'package:warehouse_scanner/session_store.dart';
 
@@ -71,6 +73,14 @@ Future<(ApiClient, List<Map<String, dynamic>>)> fakeApi({
             'reservation_number': body['reservation_number'],
             'in_code': body['in_code'],
             'product': productJson(subject),
+            // Sesi reservasi: progres setelah barang ini (server palsu: barang ke-1).
+            if (body['reservation_total'] != null)
+              'reservation': {
+                'reservation_number': body['reservation_number'],
+                'total_items': body['reservation_total'],
+                'taken': 1,
+                'status': body['reservation_total'] == 1 ? 'DONE' : 'OPEN',
+              },
           },
         }),
         200,
@@ -80,24 +90,31 @@ Future<(ApiClient, List<Map<String, dynamic>>)> fakeApi({
   return (api, sent);
 }
 
-/// Tumpukan seperti di aplikasi: menu → scan → layar jumlah.
+/// Sesi reservasi baru 0012345 dengan [total] item.
+ReservationSession newSession(ApiClient api, {int total = 3}) =>
+    ReservationSession(api, Reservation(number: '0012345', total: total, taken: 0, items: []));
+
+/// Tumpukan seperti di aplikasi: menu → (sesi reservasi) → scan → layar jumlah.
 Future<void> openQuantity(
   WidgetTester tester,
   ApiClient api,
   Mode mode, {
   Product? item,
+  ReservationSession? session,
 }) async {
   final navigator = GlobalKey<NavigatorState>();
   await tester.pumpWidget(
     MaterialApp(
       navigatorKey: navigator,
-      initialRoute: ScanScreen.routeName,
       routes: {
         '/': (_) => const Scaffold(body: Text('menu')),
+        ReservationScreen.routeName: (_) => const Scaffold(body: Text('ringkasan reservasi')),
         ScanScreen.routeName: (_) => const Scaffold(body: Text('kamera scan')),
       },
     ),
   );
+  if (session != null) navigator.currentState!.pushNamed(ReservationScreen.routeName);
+  navigator.currentState!.pushNamed(ScanScreen.routeName);
   navigator.currentState!.push(
     MaterialPageRoute<void>(
       builder: (_) => QuantityScreen(
@@ -105,6 +122,7 @@ Future<void> openQuantity(
         mode: mode,
         token: token,
         product: item ?? product,
+        session: session,
       ),
     ),
   );
@@ -119,10 +137,19 @@ Finder field(String key) => find.descendant(
 String text(WidgetTester tester, String key) =>
     tester.widget<EditableText>(field(key)).controller.text;
 
+/// Gulir daftar utama layar sampai [finder] terlihat penuh (layar uji hanya 800×600).
+Future<void> reveal(WidgetTester tester, Finder finder) async {
+  await tester.scrollUntilVisible(finder, 150, scrollable: find.byType(Scrollable).first);
+  await tester.ensureVisible(finder);
+  await tester.pumpAndSettle();
+}
+
 void main() {
-  testWidgets('OUT: angka saja, batas stok, no reservasi 7 angka, lalu selesai', (tester) async {
+  testWidgets('OUT dalam sesi reservasi: angka saja, batas stok, tanpa ketik no reservasi lagi', (tester) async {
     final (api, sent) = await fakeApi();
-    await openQuantity(tester, api, Mode.outbound);
+    final session = newSession(api);
+    await openQuantity(tester, api, Mode.outbound, session: session);
+    expect(find.text('Reservasi 0012345 · barang ke-1 dari 3'), findsOneWidget);
 
     final quantityInput = tester.widget<EditableText>(field('quantity'));
     expect(quantityInput.keyboardType, TextInputType.number);
@@ -130,7 +157,7 @@ void main() {
     expect(text(tester, 'quantity'), '12', reason: 'huruf & simbol ditolak');
 
     await tester.enterText(find.byKey(const Key('quantity')), '150');
-    await tester.tap(find.text('LANJUT'));
+    await tester.tap(find.text('SELESAI'));
     await tester.pumpAndSettle();
     expect(find.text('Stok tidak mencukupi. Stok tersedia: 99.'), findsOneWidget);
     expect(sent, isEmpty);
@@ -138,21 +165,6 @@ void main() {
     await tester.enterText(find.byKey(const Key('quantity')), '5');
     await tester.pump();
     expect(find.text('Stok: 99 → 94 PCS'), findsOneWidget);
-    await tester.tap(find.text('LANJUT'));
-    await tester.pumpAndSettle();
-    expect(find.text('No Reservasi'), findsOneWidget);
-
-    expect(tester.widget<EditableText>(field('reservation')).keyboardType, TextInputType.number);
-    await tester.enterText(find.byKey(const Key('reservation')), '12345678x');
-    expect(text(tester, 'reservation'), '1234567', reason: 'maksimal 7 angka');
-
-    await tester.enterText(find.byKey(const Key('reservation')), '123');
-    await tester.tap(find.text('SELESAI'));
-    await tester.pumpAndSettle();
-    expect(find.text('No reservasi harus tepat 7 angka.'), findsOneWidget);
-    expect(sent, isEmpty);
-
-    await tester.enterText(find.byKey(const Key('reservation')), '0012345');
     await tester.tap(find.text('SELESAI'));
     await tester.pumpAndSettle();
     expect(sent.single, {
@@ -160,17 +172,41 @@ void main() {
       'mode': 'OUT',
       'quantity': 5,
       'reservation_number': '0012345',
+      'reservation_total': 3,
       // Kunci pengiriman unik: kirim ulang tidak tercatat dua kali.
       'client_ref': matches(RegExp(r'^[0-9a-f-]{36}$')),
     });
     expect(find.text('Transaksi berhasil'), findsOneWidget);
     expect(find.text('0012345'), findsOneWidget);
     expect(find.text('99 → 94 PCS'), findsOneWidget);
+    expect(
+      find.text('Reservasi 0012345: 1 dari 3 barang. Belum selesai, kurang 2 barang.'),
+      findsOneWidget,
+    );
+    expect(session.has(product.id), isTrue);
 
-    // Kembali ke kamera; layar jumlah/reservasi sudah tidak ada di tumpukan.
-    await tester.tap(find.text('SCAN BERIKUTNYA'));
+    // Belum selesai: kembali ke kamera untuk barang berikutnya.
+    await reveal(tester, find.text('SCAN BERIKUTNYA (2/3)'));
+    await tester.tap(find.text('SCAN BERIKUTNYA (2/3)'));
     await tester.pumpAndSettle();
     expect(find.text('kamera scan'), findsOneWidget);
+    session.dispose();
+  });
+
+  testWidgets('OUT barang terakhir reservasi: SELESAI lalu ke ringkasan', (tester) async {
+    final (api, _) = await fakeApi();
+    final session = newSession(api, total: 1);
+    await openQuantity(tester, api, Mode.outbound, session: session);
+    await tester.enterText(find.byKey(const Key('quantity')), '2');
+    await tester.tap(find.text('SELESAI'));
+    await tester.pumpAndSettle();
+    expect(find.text('Reservasi 0012345 SELESAI: 1 dari 1 barang.'), findsOneWidget);
+    expect(session.done, isTrue);
+    await reveal(tester, find.text('SELESAI · lihat ringkasan'));
+    await tester.tap(find.text('SELESAI · lihat ringkasan'));
+    await tester.pumpAndSettle();
+    expect(find.text('ringkasan reservasi'), findsOneWidget);
+    session.dispose();
   });
 
   testWidgets('IN: jumlah lalu kode masuk 111.22.33 (titik otomatis), tanpa no reservasi', (tester) async {
@@ -239,7 +275,8 @@ void main() {
 
   testWidgets('Kg: keyboard desimal, koma diterima tanpa pembulatan', (tester) async {
     final (api, sent) = await fakeApi(item: kgProduct);
-    await openQuantity(tester, api, Mode.outbound, item: kgProduct);
+    final session = newSession(api);
+    await openQuantity(tester, api, Mode.outbound, item: kgProduct, session: session);
 
     final input = tester.widget<EditableText>(field('quantity'));
     expect(input.keyboardType, const TextInputType.numberWithOptions(decimal: true));
@@ -255,15 +292,12 @@ void main() {
     await tester.pump();
     expect(text(tester, 'quantity'), '0,3');
 
-    await tester.tap(find.text('LANJUT'));
-    await tester.pumpAndSettle();
-    expect(find.text('Jumlah keluar: 0.3 Kg'), findsOneWidget);
-    await tester.enterText(find.byKey(const Key('reservation')), '0012345');
     await tester.tap(find.text('SELESAI'));
     await tester.pumpAndSettle();
     expect(sent.single['quantity'], 0.3);
     expect(find.text('−0.3 Kg'), findsOneWidget);
     expect(find.text('548.8 → 548.5 Kg'), findsOneWidget);
+    session.dispose();
   });
 
   testWidgets('PCS tetap bulat: koma ditolak', (tester) async {

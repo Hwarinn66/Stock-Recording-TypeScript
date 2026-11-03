@@ -6,6 +6,7 @@ import '../api.dart';
 import '../offline.dart';
 import '../ui.dart';
 import 'queue_screen.dart';
+import 'reservation_screen.dart';
 import 'scan_screen.dart';
 
 /// Langkah 1: pilih IN (barang masuk) atau OUT (barang keluar). Selama menu ini
@@ -166,7 +167,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                     child: _ModeButton(
                       mode: Mode.outbound,
                       icon: Icons.north,
-                      subtitle: 'Scan barang, isi jumlah, lalu no reservasi',
+                      subtitle: 'Isi no reservasi & total item, lalu scan barang',
                       onTap: () => _open(context, Mode.outbound),
                     ),
                   ),
@@ -210,6 +211,13 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   }
 
   void _open(BuildContext context, Mode? mode) {
+    if (mode == Mode.outbound) {
+      // Barang keluar: no reservasi & total item sekali, lalu scan satu per satu.
+      Navigator.of(context).push(
+        MaterialPageRoute<void>(builder: (_) => ReservationStartScreen(api: api)),
+      );
+      return;
+    }
     Navigator.of(context).push(
       MaterialPageRoute<void>(
         settings: const RouteSettings(name: ScanScreen.routeName),

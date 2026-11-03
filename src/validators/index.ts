@@ -19,6 +19,28 @@ export const reservationSchema = z
   .string()
   .regex(/^\d{7}$/, "No reservasi harus tepat 7 angka.");
 export const lookupSchema = z.object({ mode: z.enum(["IN", "OUT"]) });
+/** Total item sesi reservasi = jumlah jenis barang yang diambil. */
+export const reservationTotalSchema = z
+  .number()
+  .int("Total item harus bilangan bulat.")
+  .min(1, "Total item minimal 1.")
+  .max(999, "Total item maksimal 999.");
+export const reservationCreateSchema = z
+  .object({
+    reservation_number: reservationSchema,
+    total_items: reservationTotalSchema,
+  })
+  .strict();
+export const reservationPatchSchema = z
+  .object({ total_items: reservationTotalSchema })
+  .strict();
+/** Riwayat reservasi di dashboard. */
+export const reservationHistorySchema = z.object({
+  q: z.string().trim().max(60).default(""),
+  status: z.enum(["OPEN", "DONE"]).optional(),
+  page: z.coerce.number().int().min(1).max(100000).default(1),
+  limit: z.coerce.number().int().min(1).max(100).default(10),
+});
 // Revisi transaksi IN/OUT yang salah input dari halaman Riwayat.
 export const reviseSchema = z
   .object({
@@ -39,6 +61,9 @@ export const recordSchema = z
     mode: z.enum(["IN", "OUT"]),
     quantity: quantitySchema,
     reservation_number: reservationSchema.optional(),
+    // Sesi reservasi HP 1.3.0: total item sesi; ada = transaksi ini bagian dari sesi
+    // (dibuat otomatis bila sesi dimulai saat HP offline). Hanya untuk barang keluar.
+    reservation_total: reservationTotalSchema.optional(),
     // UUID dari HP per pengiriman; kiriman ulang dengan kunci sama tidak dicatat dua kali.
     client_ref: z.string().uuid().optional(),
     // Antrean offline HP: waktu barang benar-benar masuk/keluar (bukan waktu terkirim).
@@ -65,6 +90,12 @@ export const recordSchema = z
         code: "custom",
         path: ["reservation_number"],
         message: "No reservasi wajib untuk barang keluar.",
+      });
+    if (value.mode === "IN" && value.reservation_total !== undefined)
+      ctx.addIssue({
+        code: "custom",
+        path: ["reservation_total"],
+        message: "Total item reservasi hanya untuk barang keluar.",
       });
     if (value.mode === "IN" && value.reservation_number)
       ctx.addIssue({

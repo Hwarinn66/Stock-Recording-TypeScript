@@ -20,6 +20,7 @@ import { Input } from "@/components/ui/input";
 import { Card } from "@/components/ui/card";
 import type { StockTransaction, InventoryProduct } from "@/types";
 import { Heading, State, Badge, useData, StockBadge } from "./shared";
+import { ReservationHistory } from "./reservations";
 function PendingCard({
   item,
   onChange,
@@ -156,71 +157,6 @@ export function PendingList({
     </>
   );
 }
-// Barang keluar terbaru dari aplikasi HP beserta no reservasi (identitas pengambilan & divisi).
-function RecentReservations({ version }: { version: number }) {
-  const list = useData<{ items: StockTransaction[] }>(
-    "history/reservations?limit=8&sort=scanned_at&direction=desc",
-    version,
-  );
-  const settings = useData<{ timezone?: string }>("settings");
-  return (
-    <section className="mb-8">
-      <div className="flex items-center justify-between mb-4">
-        <h2 className="text-lg font-bold">No reservasi terbaru</h2>
-        <Link href="/reservations" className="text-xs text-emerald-700">
-          Lihat semua →
-        </Link>
-      </div>
-      <State
-        error={list.error}
-        loading={!list.data && list.loading}
-        empty={list.data?.items.length === 0}
-      />
-      {!!list.data?.items.length && (
-        <Card className="p-0 overflow-x-auto">
-          <table className="w-full text-xs">
-            <thead>
-              <tr>
-                {[
-                  "No Reservasi",
-                  "Waktu",
-                  "Kode Barang",
-                  "Nama Barang",
-                  "Qty Keluar",
-                  "Lokasi",
-                  "Petugas",
-                  "Nomor Transaksi",
-                ].map((h) => (
-                  <th key={h}>{h}</th>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              {list.data.items.map((t) => (
-                <tr key={t.id}>
-                  <td className="font-mono text-sm font-bold">
-                    {t.reservation_number}
-                  </td>
-                  <td>{timestamp(t.scanned_at, settings.data?.timezone)}</td>
-                  <td className="font-mono">{t.sku}</td>
-                  <td>{t.name}</td>
-                  <td className="font-bold">
-                    {t.quantity} {t.unit}
-                  </td>
-                  <td>
-                    {t.room_name} / {t.location_code}
-                  </td>
-                  <td>{t.actor_name || "—"}</td>
-                  <td className="text-slate-500">{t.transaction_number}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </Card>
-      )}
-    </section>
-  );
-}
 export function Dashboard() {
   const { version } = useLive();
   const stats = useData<Record<string, number>>("dashboard", version);
@@ -296,7 +232,8 @@ export function Dashboard() {
           );
         })}
       </div>
-      <RecentReservations version={version} />
+      {/* Per no reservasi; klik untuk melihat barang yang diambil. */}
+      <ReservationHistory version={version} />
       <div className="grid xl:grid-cols-[1fr_320px] gap-6">
         <section id="pending" className="scroll-mt-6">
           {/* Daftar lengkap transaksi menunggu (alur scan lama) hanya di sini. */}

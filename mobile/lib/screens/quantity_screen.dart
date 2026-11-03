@@ -3,10 +3,10 @@ import 'package:flutter/services.dart';
 
 import '../api.dart';
 import '../offline.dart';
+import '../reservation.dart';
 import '../ui.dart';
 import '../validators.dart';
 import 'in_code_screen.dart';
-import 'reservation_screen.dart';
 import 'result_screen.dart';
 
 /// Keyboard angka saja; formatter juga menolak huruf dari paste/keyboard fisik.
@@ -23,7 +23,7 @@ class DecimalInputFormatter extends TextInputFormatter {
   ) => _pattern.hasMatch(newValue.text) ? newValue : oldValue;
 }
 
-/// Langkah 3: isi jumlah barang. IN langsung selesai, OUT lanjut ke no reservasi.
+/// Langkah 3: isi jumlah barang. IN lanjut ke kode masuk; OUT (sesi reservasi) langsung selesai.
 class QuantityScreen extends StatefulWidget {
   const QuantityScreen({
     super.key,
@@ -32,6 +32,7 @@ class QuantityScreen extends StatefulWidget {
     required this.token,
     required this.product,
     this.offline = false,
+    this.session,
   });
 
   final ApiClient api;
@@ -40,6 +41,8 @@ class QuantityScreen extends StatefulWidget {
   final Product product;
   /// Barang dikenali dari data di HP karena server tidak terjangkau.
   final bool offline;
+  /// Sesi reservasi barang keluar: no reservasi & total item sudah diisi di awal.
+  final ReservationSession? session;
 
   @override
   State<QuantityScreen> createState() => _QuantityScreenState();
@@ -77,27 +80,18 @@ class _QuantityScreenState extends State<QuantityScreen> {
       _quantity.text,
       decimal: allowsDecimal(widget.product.unit),
     )!;
-    if (widget.mode.needsReservation || widget.mode.needsInCode) {
-      // OUT → no reservasi; IN → kode masuk.
+    if (widget.mode.needsInCode) {
+      // IN → kode masuk.
       await Navigator.of(context).push(
         MaterialPageRoute<void>(
-          builder: (_) => widget.mode.needsReservation
-              ? ReservationScreen(
-                  api: widget.api,
-                  mode: widget.mode,
-                  token: widget.token,
-                  product: widget.product,
-                  quantity: quantity,
-                  offline: widget.offline,
-                )
-              : InCodeScreen(
-                  api: widget.api,
-                  mode: widget.mode,
-                  token: widget.token,
-                  product: widget.product,
-                  quantity: quantity,
-                  offline: widget.offline,
-                ),
+          builder: (_) => InCodeScreen(
+            api: widget.api,
+            mode: widget.mode,
+            token: widget.token,
+            product: widget.product,
+            quantity: quantity,
+            offline: widget.offline,
+          ),
         ),
       );
       return;
@@ -112,6 +106,7 @@ class _QuantityScreenState extends State<QuantityScreen> {
       quantity: quantity,
       clientRef: _clientRef,
       offline: widget.offline,
+      session: widget.session,
     );
     if (mounted) setState(() => _busy = false);
   }
@@ -145,6 +140,14 @@ class _QuantityScreenState extends State<QuantityScreen> {
                     ProductCard(
                       product: product,
                       stockLabel: offline ? 'Perkiraan stok' : 'Stok saat ini',
+                      footer: widget.session == null
+                          ? null
+                          : Text(
+                              'Reservasi ${widget.session!.number} · barang ke-'
+                              '${widget.session!.taken + 1} dari ${widget.session!.total}',
+                              key: const Key('reservation-info'),
+                              style: const TextStyle(fontWeight: FontWeight.bold),
+                            ),
                     ),
                     const SizedBox(height: 24),
                     Text(
@@ -220,11 +223,7 @@ class _QuantityScreenState extends State<QuantityScreen> {
                           dimension: 22,
                           child: CircularProgressIndicator(strokeWidth: 2.5, color: Colors.white),
                         )
-                      : Text(
-                          widget.mode.needsReservation || widget.mode.needsInCode
-                              ? 'LANJUT'
-                              : 'SELESAI',
-                        ),
+                      : Text(widget.mode.needsInCode ? 'LANJUT' : 'SELESAI'),
                 ),
               ),
             ],

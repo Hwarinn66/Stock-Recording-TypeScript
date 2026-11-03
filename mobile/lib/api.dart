@@ -174,6 +174,101 @@ class ProductInfo {
   final List<ProductHistory> history;
 }
 
+/// Waktu dari server ("2026-10-26 07:30:00", UTC) atau ISO (data cache di HP).
+DateTime parseServerTime(String value) =>
+    value.contains('T') ? DateTime.parse(value) : DateTime.parse('${value.replaceFirst(' ', 'T')}Z');
+
+/// Barang yang sudah diambil dalam satu reservasi.
+class ReservationItem {
+  ReservationItem({
+    required this.productId,
+    required this.sku,
+    required this.name,
+    required this.unit,
+    required this.quantity,
+    required this.scannedAt,
+    this.transactionNumber,
+    this.pending = false,
+  });
+
+  factory ReservationItem.fromJson(Map<String, dynamic> json) => ReservationItem(
+    productId: json['product_id'] as int,
+    sku: json['sku'] as String,
+    name: json['name'] as String,
+    unit: json['unit'] as String,
+    quantity: json['quantity'] as num,
+    scannedAt: parseServerTime(json['scanned_at'] as String),
+    transactionNumber: json['transaction_number'] as String?,
+  );
+
+  final int productId;
+  final String sku;
+  final String name;
+  final String unit;
+  final num quantity;
+  final DateTime scannedAt;
+  final String? transactionNumber;
+  /// true = masih di antrean HP, belum terkirim ke server.
+  final bool pending;
+
+  Map<String, Object?> toJson() => {
+    'product_id': productId,
+    'sku': sku,
+    'name': name,
+    'unit': unit,
+    'quantity': quantity,
+    'scanned_at': scannedAt.toUtc().toIso8601String(),
+    'transaction_number': transactionNumber,
+  };
+}
+
+/// Progres reservasi dalam jawaban transaksi (tanpa daftar barang).
+class ReservationProgress {
+  ReservationProgress({required this.number, required this.total, required this.taken, required this.done});
+
+  factory ReservationProgress.fromJson(Map<String, dynamic> json) => ReservationProgress(
+    number: json['reservation_number'] as String,
+    total: json['total_items'] as int,
+    taken: json['taken'] as int,
+    done: json['status'] == 'DONE',
+  );
+
+  final String number;
+  /// Jumlah jenis barang yang harus diambil.
+  final int total;
+  /// Jumlah jenis barang yang sudah diambil.
+  final int taken;
+  final bool done;
+}
+
+/// Sesi pengambilan per no reservasi: total item, progres, dan barang yang sudah diambil.
+class Reservation {
+  Reservation({required this.number, required this.total, required this.taken, required this.items});
+
+  factory Reservation.fromJson(Map<String, dynamic> json) => Reservation(
+    number: json['reservation_number'] as String,
+    total: json['total_items'] as int,
+    taken: json['taken'] as int,
+    items: (json['items'] as List? ?? [])
+        .map((e) => ReservationItem.fromJson(e as Map<String, dynamic>))
+        .toList(),
+  );
+
+  final String number;
+  final int total;
+  final int taken;
+  final List<ReservationItem> items;
+  bool get done => taken >= total;
+
+  Map<String, Object?> toJson() => {
+    'reservation_number': number,
+    'total_items': total,
+    'taken': taken,
+    'status': done ? 'DONE' : 'OPEN',
+    'items': items.map((e) => e.toJson()).toList(),
+  };
+}
+
 class TransactionResult {
   TransactionResult({
     required this.transactionNumber,
@@ -183,6 +278,7 @@ class TransactionResult {
     required this.product,
     this.reservationNumber,
     this.inCode,
+    this.reservation,
     this.replayed = false,
   });
 
@@ -195,6 +291,9 @@ class TransactionResult {
         reservationNumber: json['reservation_number'] as String?,
         inCode: json['in_code'] as String?,
         product: Product.fromJson(json['product'] as Map<String, dynamic>),
+        reservation: json['reservation'] == null
+            ? null
+            : ReservationProgress.fromJson(json['reservation'] as Map<String, dynamic>),
         replayed: json['replayed'] as bool? ?? false,
       );
 
@@ -205,6 +304,8 @@ class TransactionResult {
   final String? reservationNumber;
   final String? inCode;
   final Product product;
+  /// Progres sesi reservasi setelah transaksi ini (null = bukan bagian dari sesi).
+  final ReservationProgress? reservation;
   /// true = transaksi ini sudah tersimpan sebelumnya (kiriman ulang, tidak dicatat dua kali).
   final bool replayed;
 }
@@ -271,6 +372,7 @@ class ApiClient {
     required Mode mode,
     required num quantity,
     String? reservationNumber,
+    int? reservationTotal,
     String? inCode,
     String? clientRef,
     DateTime? recordedAt,
@@ -280,6 +382,8 @@ class ApiClient {
       'mode': mode.code,
       'quantity': quantity,
       'reservation_number': ?reservationNumber,
+      // Bagian dari sesi reservasi (server membuat sesinya bila dimulai saat offline).
+      'reservation_total': ?reservationTotal,
       'in_code': ?inCode,
       'client_ref': ?clientRef,
       'recorded_at': ?recordedAt?.toUtc().toIso8601String(),
@@ -287,6 +391,37 @@ class ApiClient {
     final result = TransactionResult.fromJson(data as Map<String, dynamic>);
     await store.offline.rememberProduct(token, result.product);
     return result;
+  }
+
+  /// Sesi reservasi beserta barang yang sudah diambil; null = belum dimulai.
+  Future<Reservation?> reservation(String number) async {
+    try {
+      final data = await _send('GET', 'reservations/$number');
+      return _remember(Reservation.fromJson(data as Map<String, dynamic>));
+    } on ApiException catch (error) {
+      if (error.code == 'RESERVATION_NOT_FOUND') return null;
+      rethrow;
+    }
+  }
+
+  /// Mulai sesi reservasi. Sudah dimulai (mis. di HP lain) → ApiException RESERVATION_EXISTS.
+  Future<Reservation> createReservation(String number, int total) async {
+    final data = await _send('POST', 'reservations', body: {
+      'reservation_number': number,
+      'total_items': total,
+    });
+    return _remember(Reservation.fromJson(data as Map<String, dynamic>));
+  }
+
+  /// Ubah total item (tidak boleh kurang dari barang yang sudah diambil).
+  Future<Reservation> setReservationTotal(String number, int total) async {
+    final data = await _send('PATCH', 'reservations/$number', body: {'total_items': total});
+    return _remember(Reservation.fromJson(data as Map<String, dynamic>));
+  }
+
+  Future<Reservation> _remember(Reservation reservation) async {
+    await store.offline.rememberReservation(reservation);
+    return reservation;
   }
 
   /// Halaman Cek Barang: detail barang hasil scan (tidak mengubah apa pun).
@@ -335,6 +470,7 @@ class ApiClient {
             mode: item.mode,
             quantity: item.quantity,
             reservationNumber: item.reservationNumber,
+            reservationTotal: item.reservationTotal,
             inCode: item.inCode,
             clientRef: item.clientRef,
             recordedAt: item.recordedAt,

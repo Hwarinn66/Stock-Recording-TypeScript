@@ -5,20 +5,24 @@ import 'package:flutter/services.dart';
 import 'package:mobile_scanner/mobile_scanner.dart';
 
 import '../api.dart';
+import '../reservation.dart';
 import '../ui.dart';
 import 'product_info_screen.dart';
 import 'quantity_screen.dart';
+import 'reservation_screen.dart';
 
 /// Langkah 2: scan QR barang. Kamera dimatikan selama barang dicek dan
 /// selama layar lain (jumlah, reservasi, hasil) menutupinya, lalu menyala
 /// lagi saat layar ini terlihat kembali.
 class ScanScreen extends StatefulWidget {
   /// [mode] null = Cek Barang: scan hanya untuk melihat detail barang.
-  const ScanScreen({super.key, required this.api, required this.mode});
+  /// [session] = sesi reservasi barang keluar (no reservasi + total item).
+  const ScanScreen({super.key, required this.api, required this.mode, this.session});
 
   static const routeName = '/scan';
   final ApiClient api;
   final Mode? mode;
+  final ReservationSession? session;
 
   @override
   State<ScanScreen> createState() => _ScanScreenState();
@@ -87,8 +91,11 @@ class _ScanScreenState extends State<ScanScreen>
     await _controller.dispose();
   }
 
+  /// Semua item reservasi sudah diambil: kamera tidak perlu menyala.
+  bool get _sessionDone => widget.session?.done ?? false;
+
   Future<void> _start() async {
-    if (!mounted || _controller.value.isRunning) return;
+    if (!mounted || _controller.value.isRunning || _sessionDone) return;
     _subscription ??= _controller.barcodes.listen(_onDetect);
     try {
       await _controller.start();
@@ -104,7 +111,7 @@ class _ScanScreenState extends State<ScanScreen>
   }
 
   void _onDetect(BarcodeCapture capture) {
-    if (_busy) return;
+    if (_busy || _sessionDone) return;
     for (final barcode in capture.barcodes) {
       final value = barcode.rawValue?.trim();
       if (value != null && value.isNotEmpty) {
@@ -180,6 +187,16 @@ class _ScanScreenState extends State<ScanScreen>
   }
 
   void _openQuantity(String token, Product product, {bool offline = false}) {
+    final session = widget.session;
+    if (session != null && session.has(product.id)) {
+      // Satu barang hanya sekali per reservasi (server juga menolaknya).
+      unawaited(HapticFeedback.heavyImpact());
+      setState(
+        () => _error = 'Barang ${product.sku} sudah diambil untuk reservasi '
+            '${session.number}. Scan barang lain.',
+      );
+      return;
+    }
     // Kamera menyala lagi lewat didPopNext saat layar ini terlihat kembali.
     unawaited(
       Navigator.of(context).push(
@@ -190,6 +207,7 @@ class _ScanScreenState extends State<ScanScreen>
             token: token,
             product: product,
             offline: offline,
+            session: widget.session,
           ),
         ),
       ),
@@ -218,7 +236,13 @@ class _ScanScreenState extends State<ScanScreen>
       appBar: AppBar(
         backgroundColor: color,
         foregroundColor: Colors.white,
-        title: Text(mode == null ? 'Cek Barang' : '${mode.code} · ${mode.label}'),
+        title: Text(
+          mode == null
+              ? 'Cek Barang'
+              : widget.session != null
+              ? '${mode.code} · ${widget.session!.number}'
+              : '${mode.code} · ${mode.label}',
+        ),
         actions: [
           ValueListenableBuilder(
             valueListenable: _controller,
@@ -258,6 +282,28 @@ class _ScanScreenState extends State<ScanScreen>
   }
 
   Widget _panel(Color color) {
+    final session = widget.session;
+    if (session != null && session.done) {
+      return Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Text(
+            'Semua ${session.total} barang reservasi ${session.number} sudah diambil.',
+            textAlign: TextAlign.center,
+            style: const TextStyle(fontSize: 15, fontWeight: FontWeight.bold),
+          ),
+          const SizedBox(height: 12),
+          FilledButton(
+            onPressed: () => Navigator.of(context).popUntil(
+              ModalRoute.withName(ReservationScreen.routeName),
+            ),
+            style: FilledButton.styleFrom(backgroundColor: brandGreen, minimumSize: const Size.fromHeight(50)),
+            child: const Text('Lihat ringkasan'),
+          ),
+        ],
+      );
+    }
     if (_error != null) {
       return Column(
         mainAxisSize: MainAxisSize.min,
@@ -298,7 +344,11 @@ class _ScanScreenState extends State<ScanScreen>
           ? 'Arahkan kamera ke label QR untuk melihat detail barang.'
           : widget.mode == Mode.inbound
           ? 'Arahkan kamera ke label QR barang yang masuk.'
+          : session != null
+          ? 'Barang ke-${session.taken + 1} dari ${session.total} · reservasi ${session.number}\n'
+                'Arahkan kamera ke label QR barang yang akan diambil.'
           : 'Arahkan kamera ke label QR barang yang akan diambil.',
+      key: const Key('scan-hint'),
       textAlign: TextAlign.center,
       style: const TextStyle(fontSize: 15),
     );

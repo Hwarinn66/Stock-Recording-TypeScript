@@ -8,6 +8,7 @@ import 'package:http/testing.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:warehouse_scanner/api.dart';
 import 'package:warehouse_scanner/offline.dart';
+import 'package:warehouse_scanner/reservation.dart';
 import 'package:warehouse_scanner/screens/home_screen.dart';
 import 'package:warehouse_scanner/screens/quantity_screen.dart';
 import 'package:warehouse_scanner/screens/scan_screen.dart';
@@ -58,6 +59,13 @@ http.Response recorded(Map<String, dynamic> body, {bool replayed = false}) => ht
 
 http.Response failure(String code, String message, int status) =>
     http.Response(jsonEncode({'success': false, 'code': code, 'message': message}), status);
+
+/// Gulir daftar utama layar sampai [finder] terlihat penuh (layar uji hanya 800×600).
+Future<void> reveal(WidgetTester tester, Finder finder) async {
+  await tester.scrollUntilVisible(finder, 150, scrollable: find.byType(Scrollable).first);
+  await tester.ensureVisible(finder);
+  await tester.pumpAndSettle();
+}
 
 void main() {
   test('client_ref berupa UUID v4 dan selalu berbeda', () {
@@ -185,7 +193,13 @@ void main() {
     expect(store.offline.catalogUpdatedAt, isNotNull);
   });
 
-  Future<void> openQuantity(WidgetTester tester, ApiClient api, Mode mode, {bool offline = false}) async {
+  Future<void> openQuantity(
+    WidgetTester tester,
+    ApiClient api,
+    Mode mode, {
+    bool offline = false,
+    ReservationSession? session,
+  }) async {
     final navigator = GlobalKey<NavigatorState>();
     await tester.pumpWidget(
       MaterialApp(
@@ -199,7 +213,14 @@ void main() {
     );
     navigator.currentState!.push(
       MaterialPageRoute<void>(
-        builder: (_) => QuantityScreen(api: api, mode: mode, token: token, product: product, offline: offline),
+        builder: (_) => QuantityScreen(
+          api: api,
+          mode: mode,
+          token: token,
+          product: product,
+          offline: offline,
+          session: session,
+        ),
       ),
     );
     await tester.pumpAndSettle();
@@ -234,18 +255,30 @@ void main() {
   testWidgets('offline: OUT melebihi perkiraan stok diberi peringatan, tetap bisa disimpan', (tester) async {
     final store = await freshStore();
     final api = ApiClient(store, MockClient((_) async => throw http.ClientException('offline')));
-    await openQuantity(tester, api, Mode.outbound, offline: true);
+    final session = ReservationSession(
+      api,
+      Reservation(number: '0012345', total: 2, taken: 0, items: []),
+      offline: true,
+    );
+    await openQuantity(tester, api, Mode.outbound, offline: true, session: session);
     await tester.enterText(find.byKey(const Key('quantity')), '12');
     await tester.pump();
+    await reveal(tester, find.textContaining('Melebihi perkiraan stok'));
     expect(find.textContaining('Melebihi perkiraan stok'), findsOneWidget);
-    await tester.tap(find.text('LANJUT'));
-    await tester.pumpAndSettle();
-    expect(find.textContaining('Server tidak terjangkau'), findsOneWidget);
-    await tester.enterText(find.byKey(const Key('reservation')), '0012345');
+    // No reservasi sudah diisi di awal sesi: langsung selesai.
     await tester.tap(find.text('SELESAI'));
     await tester.pumpAndSettle();
     expect(find.text('Tersimpan di HP'), findsOneWidget);
-    expect(store.offline.pending.single.reservationNumber, '0012345');
+    final item = store.offline.pending.single;
+    expect(item.reservationNumber, '0012345');
+    expect(item.reservationTotal, 2);
+    // Barang di antrean HP ikut terhitung di progres reservasi.
+    expect(session.taken, 1);
+    expect(session.has(product.id), isTrue);
+    expect(find.textContaining('Reservasi 0012345: 1 dari 2 barang'), findsOneWidget);
+    await reveal(tester, find.text('SCAN BERIKUTNYA (2/2)'));
+    expect(find.text('SCAN BERIKUTNYA (2/2)'), findsOneWidget);
+    session.dispose();
   });
 
   testWidgets('sinyal putus saat kirim: masuk antrean dengan client_ref yang sama', (tester) async {

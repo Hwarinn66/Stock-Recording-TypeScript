@@ -29,6 +29,7 @@ class QueuedTransaction {
     required this.product,
     required this.recordedAt,
     this.reservationNumber,
+    this.reservationTotal,
     this.inCode,
     this.attempts = 0,
     this.lastError,
@@ -40,6 +41,7 @@ class QueuedTransaction {
     mode: Mode.values.firstWhere((m) => m.code == json['mode']),
     quantity: json['quantity'] as num,
     reservationNumber: json['reservation_number'] as String?,
+    reservationTotal: json['reservation_total'] as int?,
     inCode: json['in_code'] as String?,
     product: Product.fromJson(json['product'] as Map<String, dynamic>),
     recordedAt: DateTime.parse(json['recorded_at'] as String),
@@ -52,6 +54,8 @@ class QueuedTransaction {
   final Mode mode;
   final num quantity;
   final String? reservationNumber;
+  /// Total item sesi reservasi (null = transaksi di luar sesi, mis. dari versi lama).
+  final int? reservationTotal;
   final String? inCode;
   final Product product;
   /// Waktu barang benar-benar masuk/keluar (dikirim ke server sebagai recorded_at).
@@ -68,6 +72,7 @@ class QueuedTransaction {
     'mode': mode.code,
     'quantity': quantity,
     'reservation_number': reservationNumber,
+    'reservation_total': reservationTotal,
     'in_code': inCode,
     'product': product.toJson(),
     'recorded_at': recordedAt.toUtc().toIso8601String(),
@@ -86,6 +91,8 @@ class OfflineStore extends ChangeNotifier {
   static const _failedKey = 'offline_failed';
   static const _catalogKey = 'catalog';
   static const _catalogAtKey = 'catalog_updated_at';
+  static const _reservationsKey = 'reservations';
+  static const _maxReservations = 30;
   Map<String, Product>? _catalog;
 
   List<QueuedTransaction> get pending => _read(_pendingKey);
@@ -178,6 +185,27 @@ class OfflineStore extends ChangeNotifier {
       _catalogKey,
       jsonEncode(products.map((t, p) => MapEntry(t, p.toJson()))),
     );
+  }
+
+  Map<String, dynamic> get _reservations {
+    final raw = _prefs.getString(_reservationsKey);
+    return raw == null ? {} : jsonDecode(raw) as Map<String, dynamic>;
+  }
+
+  /// Data sesi reservasi terakhir dari server, untuk melanjutkan saat server tidak terjangkau.
+  Reservation? cachedReservation(String number) {
+    final json = _reservations[number];
+    return json == null ? null : Reservation.fromJson(json as Map<String, dynamic>);
+  }
+
+  /// Simpan sesi terbaru (maks. 30 reservasi terakhir).
+  Future<void> rememberReservation(Reservation reservation) async {
+    final all = _reservations..remove(reservation.number);
+    all[reservation.number] = reservation.toJson();
+    while (all.length > _maxReservations) {
+      all.remove(all.keys.first);
+    }
+    await _prefs.setString(_reservationsKey, jsonEncode(all));
   }
 
   /// Perkiraan stok = stok terakhir yang diketahui HP ± transaksi yang belum terkirim.

@@ -334,12 +334,73 @@ try {
     reservationCsv.split("\r\n")[0].includes('"reservation_number","transaction_number"'),
   );
   assert.ok(reservationCsv.includes('"0012345"'));
+  // Sesi reservasi (HP 1.3.0): mulai dengan total item, scan dalam sesi, barang dobel
+  // ditolak, selesai otomatis, ubah total, lalu terlihat di riwayat reservasi dashboard.
+  const sessionNumber = String(Date.now()).slice(-7);
+  assert.equal((await mobile(`reservations/${sessionNumber}`)).status, 404);
+  assert.equal((await mobile("reservations/12x")).status, 422);
+  assert.equal(
+    (await mobile("reservations", "POST", { reservation_number: sessionNumber, total_items: 0 })).status,
+    422,
+  );
+  const started = await (
+    await mobile("reservations", "POST", { reservation_number: sessionNumber, total_items: 1 })
+  ).json();
+  assert.deepEqual([started.data.status, started.data.taken, started.data.items], ["OPEN", 0, []]);
+  assert.equal(
+    (await mobile("reservations", "POST", { reservation_number: sessionNumber, total_items: 1 })).status,
+    409,
+  );
+  const take = {
+    qr_token,
+    mode: "OUT",
+    quantity: 1,
+    reservation_number: sessionNumber,
+    reservation_total: 1,
+  };
+  const inSession = await (await mobile("transactions", "POST", take)).json();
+  assert.deepEqual(inSession.data.reservation, {
+    reservation_number: sessionNumber,
+    total_items: 1,
+    taken: 1,
+    status: "DONE",
+  });
+  const duplicate = await mobile("transactions", "POST", take);
+  assert.equal(duplicate.status, 409);
+  assert.equal((await duplicate.json()).code, "RESERVATION_DUPLICATE");
+  assert.equal(
+    (await mobile(`reservations/${sessionNumber}`, "PATCH", { total_items: 0 })).status,
+    422,
+  );
+  const reopened = await (
+    await mobile(`reservations/${sessionNumber}`, "PATCH", { total_items: 2 })
+  ).json();
+  assert.deepEqual([reopened.data.status, reopened.data.items.length], ["OPEN", 1]);
+  const listed = await (
+    await request(`reservation-history?status=OPEN&q=${sessionNumber}`)
+  ).json();
+  assert.deepEqual(
+    [listed.data.items[0].taken, listed.data.items[0].item_count, listed.data.items[0].actors],
+    [1, 1, username],
+  );
+  const detail = await (
+    await request(`reservation-history/${sessionNumber}`)
+  ).json();
+  assert.deepEqual(
+    detail.data.items.map((i: { sku: string; in_session: boolean }) => [i.sku, i.in_session]),
+    [[product.sku, true]],
+  );
+  assert.equal((await request("reservation-history/0000001")).status, 404);
+  for (const path of ["/", "/reservations"]) {
+    const page = await fetch(base + path, { headers: { Cookie: cookie } });
+    assert.equal(page.status, 200, path);
+  }
   const dashboard = await request("dashboard");
   assert.equal(dashboard.status, 200);
   await request("auth/logout", "POST", {});
   assert.equal((await request("products")).status, 401);
   console.log(
-    "PASS: authenticated HTTP API, CSRF, validation, QR SVG, scan → SSE → quantity → approve → stock/history/CSV, mobile lookup → record + reservation, session revocation.",
+    "PASS: authenticated HTTP API, CSRF, validation, QR SVG, scan → SSE → quantity → approve → stock/history/CSV, mobile lookup → record + reservation, reservation sessions, session revocation.",
   );
 } finally {
   await db.end();

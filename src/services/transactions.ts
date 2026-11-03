@@ -11,6 +11,11 @@ import {
   validAmount,
 } from "@/lib/stock";
 import type { Product, StockTransaction } from "@/types";
+import {
+  claimReservationItem,
+  refreshReservation,
+  reservationProgress,
+} from "./reservations";
 export const productColumns =
   "p.id,p.sku,p.name,p.category_id,p.unit,p.movement_class,p.stock,p.min_stock,p.location_id,p.qr_token,p.description,p.active,p.created_at,p.updated_at";
 export type LockedProduct = Omit<Product, "category_name">;
@@ -138,6 +143,9 @@ async function recorded(ref: string) {
     reservation_number: t.reservation_number,
     in_code: t.in_code ?? null,
     product,
+    reservation: t.reservation_id
+      ? await reservationProgress(t.reservation_id)
+      : null,
     replayed: true,
   };
 }
@@ -180,6 +188,8 @@ export async function productInfo(token: string) {
   };
 }
 // Aplikasi scanner HP: transaksi langsung APPROVED dan stok langsung berubah.
+// Barang keluar dengan `reservation_total` = bagian dari sesi reservasi (HP 1.3.0):
+// ditautkan ke reservasinya, barang sama ditolak, status selesai otomatis.
 // `client_ref` (UUID dari HP) membuat kiriman ulang aman: sinyal putus setelah server
 // menyimpan, atau antrean offline yang terkirim dua kali, tidak mencatat transaksi kedua.
 export async function record(
@@ -188,6 +198,7 @@ export async function record(
     mode: "IN" | "OUT";
     quantity: number;
     reservation_number?: string;
+    reservation_total?: number;
     client_ref?: string;
     recorded_at?: string;
     in_code?: string;
@@ -226,6 +237,18 @@ export async function record(
           422,
         );
       const after = calculateStock(p.stock, input.quantity, input.mode, p.unit);
+      const reservationId =
+        input.mode === "OUT" &&
+        input.reservation_number &&
+        input.reservation_total !== undefined
+          ? await claimReservationItem(conn, {
+              reservation_number: input.reservation_number,
+              total_items: input.reservation_total,
+              product_id: p.id,
+              userId,
+              at,
+            })
+          : null;
       const number = await nextNumber(
         input.mode,
         conn,
@@ -238,7 +261,7 @@ export async function record(
         conn,
       );
       const result = await execute(
-        "INSERT INTO stock_transactions(transaction_number,product_id,location_id,location_code,room_name,transaction_type,quantity,stock_before,stock_after,status,reservation_number,in_code,client_ref,notes,scanned_at,approved_at,actor_id) VALUES (?,?,?,?,?,?,?,?,?,'APPROVED',?,?,?,?,COALESCE(?,UTC_TIMESTAMP(3)),COALESCE(?,UTC_TIMESTAMP(3)),?)",
+        "INSERT INTO stock_transactions(transaction_number,product_id,location_id,location_code,room_name,transaction_type,quantity,stock_before,stock_after,status,reservation_number,reservation_id,in_code,client_ref,notes,scanned_at,approved_at,actor_id) VALUES (?,?,?,?,?,?,?,?,?,'APPROVED',?,?,?,?,?,COALESCE(?,UTC_TIMESTAMP(3)),COALESCE(?,UTC_TIMESTAMP(3)),?)",
         [
           number,
           p.id,
@@ -250,6 +273,7 @@ export async function record(
           p.stock,
           after,
           input.reservation_number ?? null,
+          reservationId,
           inCode,
           ref,
           at ? "Dikirim dari antrean offline HP" : null,
@@ -259,6 +283,9 @@ export async function record(
         ],
         conn,
       );
+      const reservation = reservationId
+        ? await refreshReservation(reservationId, conn)
+        : null;
       await publish(conn, "transaction");
       return {
         id: result.insertId,
@@ -270,6 +297,7 @@ export async function record(
         reservation_number: input.reservation_number ?? null,
         in_code: inCode,
         product: { ...p, category_name: category?.name ?? null },
+        reservation,
         replayed: false,
       };
     });
@@ -430,6 +458,7 @@ export async function revise(
     let stock = product.stock;
     let itemAfter = item.stock_after;
     let reservation = item.reservation_number;
+    let unlink: number | null = null;
     const changes: string[] = [];
     if (input.quantity !== undefined && input.quantity !== oldQuantity) {
       if (!validAmount(input.quantity, product.unit))
@@ -464,6 +493,8 @@ export async function revise(
           "No reservasi hanya untuk barang keluar.",
         );
       reservation = input.reservation_number;
+      // Pindah no reservasi: lepas dari sesi lama (progres sesi lama dihitung ulang di bawah).
+      unlink = item.reservation_id ?? null;
       changes.push(
         `no reservasi ${item.reservation_number ?? "—"} → ${reservation}`,
       );
@@ -484,10 +515,11 @@ export async function revise(
         conn,
       );
     await execute(
-      "UPDATE stock_transactions SET quantity=?,stock_after=?,reservation_number=?,notes=? WHERE id=?",
+      `UPDATE stock_transactions SET quantity=?,stock_after=?,reservation_number=?,notes=?${unlink ? ",reservation_id=NULL" : ""} WHERE id=?`,
       [quantity, itemAfter, reservation, notes, id],
       conn,
     );
+    if (unlink) await refreshReservation(unlink, conn);
     await publish(conn, "revised");
     return {
       id,

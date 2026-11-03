@@ -77,6 +77,19 @@ CREATE TABLE transaction_sequences (
  sequence_date DATE NOT NULL, kind VARCHAR(3) NOT NULL, last_number INT UNSIGNED NOT NULL,
  PRIMARY KEY(sequence_date,kind)
 ) ENGINE=InnoDB;
+-- Sesi pengambilan per no reservasi (HP): status OPEN sampai barang berbeda yang diambil = total_items.
+CREATE TABLE reservations (
+ id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY, reservation_number CHAR(7) NOT NULL,
+ total_items INT UNSIGNED NOT NULL, status ENUM('OPEN','DONE') NOT NULL DEFAULT 'OPEN',
+ created_by INT UNSIGNED NOT NULL,
+ created_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+ updated_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
+ completed_at DATETIME(3) NULL,
+ UNIQUE KEY uq_reservation_number (reservation_number), KEY idx_reservations_status (status, created_at),
+ CONSTRAINT chk_reservations_total CHECK (total_items BETWEEN 1 AND 999),
+ CONSTRAINT chk_reservations_number CHECK (CHAR_LENGTH(reservation_number) = 7),
+ CONSTRAINT fk_reservations_user FOREIGN KEY (created_by) REFERENCES users(id)
+) ENGINE=InnoDB;
 CREATE TABLE stock_transactions (
  id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY, transaction_number VARCHAR(40) NOT NULL UNIQUE,
  product_id INT UNSIGNED NOT NULL, location_id INT UNSIGNED NOT NULL,
@@ -87,6 +100,8 @@ CREATE TABLE stock_transactions (
  status ENUM('PENDING','APPROVED','CANCELLED') NOT NULL DEFAULT 'PENDING', notes TEXT,
  -- Nomor reservasi 7 angka: identitas pengambilan & divisi untuk barang keluar.
  reservation_number CHAR(7) NULL,
+ -- Barang keluar yang diambil lewat sesi reservasi (NULL = transaksi lama / buku darurat).
+ reservation_id INT UNSIGNED NULL,
  -- Kode Masuk barang IN dari HP: 111.22.33 (barang ATK: ATK.111.22.33).
  in_code VARCHAR(20) NULL,
  -- Kunci pengiriman unik (UUID aplikasi HP / baris buku darurat): kirim ulang tidak tercatat dua kali.
@@ -99,6 +114,8 @@ CREATE TABLE stock_transactions (
  UNIQUE KEY uq_pending_product(pending_product_id), UNIQUE KEY uq_client_ref(client_ref),
  FOREIGN KEY(product_id) REFERENCES products(id), FOREIGN KEY(location_id) REFERENCES locations(id),
  FOREIGN KEY(actor_id) REFERENCES users(id),
+ KEY idx_transactions_reservation_product (reservation_id, product_id),
+ CONSTRAINT fk_transactions_reservation FOREIGN KEY (reservation_id) REFERENCES reservations(id),
  CHECK (stock_before IS NULL OR stock_before >= 0), CHECK(stock_after IS NULL OR stock_after >= 0),
  CHECK(transaction_type='ADJUSTMENT' OR quantity IS NULL OR quantity > 0),
  CHECK(reservation_number IS NULL OR CHAR_LENGTH(reservation_number) = 7),

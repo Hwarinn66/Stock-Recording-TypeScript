@@ -1,7 +1,7 @@
 import { hierarchyJoins } from "./locations";
 import { z } from "zod";
 import { rows } from "@/lib/db";
-import { localDay, sqlDateTime, zonedToUtc } from "@/lib/time";
+import { dateBoundary, localDay } from "@/lib/time";
 import { listSchema, productListSchema } from "@/validators";
 import { productListSelect } from "./products";
 import { transactionSelect } from "./transactions";
@@ -111,20 +111,7 @@ export async function listProducts(f: z.infer<typeof productListSchema>) {
     limit: f.limit,
   };
 }
-// Date filters use the same configured timezone as display (midnight offsets via Intl, including DST).
-export function dateBoundary(day: string, next = false) {
-  const [year, month, date] = day.split("-").map(Number);
-  return sqlDateTime(
-    zonedToUtc({
-      year,
-      month,
-      day: date + (next ? 1 : 0),
-      hour: 0,
-      minute: 0,
-      second: 0,
-    }),
-  );
-}
+export { dateBoundary };
 /** `type` null = semua jenis transaksi (tab "Semua" di halaman Riwayat). */
 export async function history(
   type: string | null,

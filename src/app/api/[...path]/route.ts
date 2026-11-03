@@ -8,6 +8,7 @@ import { rows } from "@/lib/db";
 import * as schemas from "@/validators";
 import * as stock from "@/services/transactions";
 import * as products from "@/services/products";
+import * as reservations from "@/services/reservations";
 import { listProducts, history, dashboard, csv } from "@/services/reports";
 import { mutateLookup } from "@/services/lookups";
 import { backupWorkbookBuffer } from "@/services/excel-backup";
@@ -164,6 +165,43 @@ async function handler(req: Request, { params }: Context) {
         await stock.scan(input.qr_token, input.mode, user.id),
         "QR berhasil dibaca. Menunggu proses di komputer.",
       );
+    }
+    // Riwayat reservasi di dashboard: per no reservasi, klik untuk melihat barangnya.
+    if (resource === "reservation-history" && method === "GET")
+      return ok(
+        key
+          ? await reservations.reservationHistoryDetail(
+              schemas.reservationSchema.parse(key),
+            )
+          : await reservations.reservationHistory(
+              schemas.reservationHistorySchema.parse(
+                Object.fromEntries(url.searchParams),
+              ),
+            ),
+      );
+    // Sesi reservasi aplikasi HP: mulai (no reservasi + total item), lanjutkan, ubah total.
+    if (resource === "reservations") {
+      if (!key && method === "POST")
+        return ok(
+          await reservations.createReservation(
+            schemas.reservationCreateSchema.parse(await body()),
+            user.id,
+          ),
+          "Reservasi dimulai",
+        );
+      if (key && !action) {
+        const number = schemas.reservationSchema.parse(key);
+        if (method === "GET")
+          return ok(await reservations.getReservation(number));
+        if (method === "PATCH")
+          return ok(
+            await reservations.setReservationTotal(
+              number,
+              schemas.reservationPatchSchema.parse(await body()).total_items,
+            ),
+            "Total item diubah",
+          );
+      }
     }
     if (resource === "pending-transactions" && method === "GET")
       return ok(await stock.pending());
