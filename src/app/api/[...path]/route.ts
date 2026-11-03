@@ -9,6 +9,7 @@ import * as schemas from "@/validators";
 import * as stock from "@/services/transactions";
 import * as products from "@/services/products";
 import * as reservations from "@/services/reservations";
+import * as receipts from "@/services/receipts";
 import { listProducts, history, dashboard, csv } from "@/services/reports";
 import { mutateLookup } from "@/services/lookups";
 import { backupWorkbookBuffer } from "@/services/excel-backup";
@@ -179,6 +180,40 @@ async function handler(req: Request, { params }: Context) {
               ),
             ),
       );
+    // Riwayat penerimaan di dashboard: per kode masuk, klik untuk melihat barang yang masuk.
+    if (resource === "receipt-history" && method === "GET")
+      return ok(
+        key
+          ? await receipts.receiptHistoryDetail(schemas.inCodeSchema.parse(key))
+          : await receipts.receiptHistory(
+              schemas.reservationHistorySchema.parse(
+                Object.fromEntries(url.searchParams),
+              ),
+            ),
+      );
+    // Sesi kode masuk aplikasi HP: mulai (kode masuk + total item), lanjutkan, ubah total.
+    if (resource === "receipts") {
+      if (!key && method === "POST")
+        return ok(
+          await receipts.createReceipt(
+            schemas.receiptCreateSchema.parse(await body()),
+            user.id,
+          ),
+          "Penerimaan dimulai",
+        );
+      if (key && !action) {
+        const code = schemas.inCodeSchema.parse(key);
+        if (method === "GET") return ok(await receipts.getReceipt(code));
+        if (method === "PATCH")
+          return ok(
+            await receipts.setReceiptTotal(
+              code,
+              schemas.reservationPatchSchema.parse(await body()).total_items,
+            ),
+            "Total item diubah",
+          );
+      }
+    }
     // Sesi reservasi aplikasi HP: mulai (no reservasi + total item), lanjutkan, ubah total.
     if (resource === "reservations") {
       if (!key && method === "POST")

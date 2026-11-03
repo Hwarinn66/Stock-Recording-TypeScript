@@ -20,7 +20,7 @@ import { Input } from "@/components/ui/input";
 import { Card } from "@/components/ui/card";
 import type { StockTransaction, InventoryProduct } from "@/types";
 import { Heading, State, Badge, useData, StockBadge } from "./shared";
-import { ReservationHistory } from "./reservations";
+import { ReceiptHistory, ReservationHistory } from "./reservations";
 function PendingCard({
   item,
   onChange,
@@ -232,8 +232,9 @@ export function Dashboard() {
           );
         })}
       </div>
-      {/* Per no reservasi; klik untuk melihat barang yang diambil. */}
+      {/* Per no reservasi / kode masuk; klik untuk melihat barangnya. */}
       <ReservationHistory version={version} />
+      <ReceiptHistory version={version} />
       <div className="grid xl:grid-cols-[1fr_320px] gap-6">
         <section id="pending" className="scroll-mt-6">
           {/* Daftar lengkap transaksi menunggu (alur scan lama) hanya di sini. */}

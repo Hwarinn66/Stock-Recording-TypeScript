@@ -6,21 +6,24 @@ Aplikasi Flutter untuk scan QR barang di gudang. Terhubung langsung ke server we
 
 1. **Login** — isi alamat server (mis. `https://10.185.200.148:3000`), username, password akun dashboard.
 2. **Pilih mode** — `IN · Barang Masuk` atau `OUT · Barang Keluar`.
-3. **Khusus OUT: No reservasi** (7 angka) — sekali di awal. Reservasi baru → isi **total item** (jumlah jenis barang yang akan diambil). Reservasi yang belum selesai → langsung dilanjutkan dari progresnya (mis. 4 dari 5), juga dari HP lain. Layar reservasi menampilkan progres, status, daftar barang yang sudah diambil, **Ubah total item**, dan **Keluar, lanjutkan nanti**.
-4. **Scan** QR pada label barang. Server langsung memeriksa barang: QR terdaftar, barang aktif, tidak ada transaksi pending, dan untuk OUT stok tidak 0. Barang yang sudah diambil untuk reservasi yang sama ditolak.
+3. **Sesi** — sekali di awal:
+   - **OUT: No reservasi** (7 angka).
+   - **IN: Kode masuk** — pilih **Bukan ATK** atau **ATK**, lalu ketik 7 angka, titik terisi otomatis: `111.22.33` (ATK: `ATK.` sudah tertulis di depan, hasilnya `ATK.111.22.33`).
+
+   Kode baru → isi **total item** (jumlah jenis barang yang diambil / masuk). Sesi yang belum selesai → langsung dilanjutkan dari progresnya (mis. 4 dari 5), juga dari HP lain. Layar sesi menampilkan progres, status, daftar barang yang sudah diambil / masuk, **Ubah total item**, dan **Keluar, lanjutkan nanti**.
+4. **Scan** QR pada label barang. Server langsung memeriksa barang: QR terdaftar, barang aktif, tidak ada transaksi pending, dan untuk OUT stok tidak 0. Barang yang sudah di-scan pada sesi yang sama ditolak. Kode masuk ATK hanya menerima barang kategori ATK, kode masuk lain hanya barang bukan ATK.
 5. **Jumlah** — keyboard angka saja (huruf/simbol ditolak, juga saat paste). Barang bersatuan Kg memakai keyboard angka dengan koma (mis. `2,5`, maks. 3 angka di belakang koma, tanpa pembulatan); satuan lain bilangan bulat. OUT tidak boleh melebihi stok.
-6. **Kode Masuk** (khusus IN) — ketik 7 angka, titik terisi otomatis: `111.22.33`. Barang kategori **ATK**: `ATK.` sudah tertulis di depan, hasilnya `ATK.111.22.33`. Server menolak format lain.
-7. **Selesai** — stok langsung berubah di server (tanpa approval komputer). Layar hasil menampilkan nomor transaksi, stok sebelum → sesudah, dan untuk OUT progres reservasi. **Scan berikutnya (4/5)** kembali ke kamera; setelah barang terakhir, **Selesai · lihat ringkasan**. Status reservasi **Belum selesai** sampai semua item terambil.
+6. **Selesai** — stok langsung berubah di server (tanpa approval komputer). Layar hasil menampilkan nomor transaksi, stok sebelum → sesudah, dan progres sesi. **Scan berikutnya (4/5)** kembali ke kamera; setelah barang terakhir, **Selesai · lihat ringkasan**. Status **Belum selesai** sampai semua item terambil / masuk.
 
 **Cek Barang** (tombol di bawah IN & OUT): scan QR untuk melihat detail barang tanpa mengubah stok — stok & status (Aman/Menipis/Habis), label pergerakan, kategori, satuan, ruangan, lokasi, blok/rak/posisi, keterangan, transaksi menunggu, total masuk/keluar 30 hari, dan 10 transaksi terakhir (termasuk no reservasi & kode masuk). Saat server tidak terjangkau, tampil data terakhir yang tersimpan di HP.
 
-Web admin menampilkan **Riwayat reservasi** di dashboard (per no reservasi, progres & status; klik untuk melihat barangnya) dan semua barang keluar di menu **Riwayat → No reservasi**. APK 1.3.0 butuh server dengan `migrations/013_reservations.sql`.
+Web admin menampilkan **Riwayat reservasi** dan **Riwayat penerimaan** di dashboard (per no reservasi / kode masuk, progres & status; klik untuk melihat barangnya), dan semua barang satu per satu di menu **Riwayat**. APK 1.4.0 butuh server dengan `migrations/014_receipts.sql`.
 
 ## Saat server tidak terjangkau (offline)
 
 - Aplikasi menyimpan **daftar barang** di HP (diperbarui otomatis saat online, tiap 30 menit). Menu utama menampilkan "Data barang di HP: N barang". Buka aplikasi minimal sekali saat online agar daftar ini terisi.
 - Bila server tidak terjangkau (Wi-Fi putus, server/database error), scan tetap berjalan: barang dikenali dari daftar di HP, pita kuning "Server tidak terjangkau" muncul, stok yang tampil adalah **perkiraan**. Jumlah keluar melebihi perkiraan stok hanya diberi peringatan; server memeriksa stok saat transaksi terkirim.
-- Reservasi tetap bisa dimulai atau dilanjutkan dari data terakhir di HP; barang yang tersimpan di HP ikut terhitung di progres dan scan dobel tetap ditolak. Mengubah total item butuh koneksi.
+- Sesi (reservasi / kode masuk) tetap bisa dimulai atau dilanjutkan dari data terakhir di HP; barang yang tersimpan di HP ikut terhitung di progres dan scan dobel tetap ditolak. Mengubah total item butuh koneksi.
 - **Selesai** → layar "Tersimpan di HP". Transaksi dikirim otomatis (tiap 30 detik selama menu terbuka, dan saat aplikasi dibuka lagi) dengan waktu kejadian aslinya. Tombol **Kirim sekarang** di menu untuk mengirim manual.
 - Transaksi yang **ditolak server** (mis. stok ternyata tidak cukup) muncul di banner merah → **Lihat**: bereskan di web lalu **Kirim ulang**, atau **Hapus** bila sudah dicatat dengan cara lain.
 - Aman dikirim ulang: setiap transaksi membawa kunci unik, jadi tidak pernah tercatat dua kali. Antrean tetap tersimpan walau logout atau aplikasi ditutup; **jangan hapus data aplikasi** sebelum antrean kosong.
@@ -53,7 +56,7 @@ Butuh Flutter SDK dan Android SDK (Android Studio).
 ```powershell
 cd mobile
 flutter pub get
-flutter test                 # unit + widget test alur jumlah/reservasi
+flutter test                 # unit + widget test alur jumlah & sesi reservasi/kode masuk
 flutter build apk --release  # → build/app/outputs/flutter-apk/app-release.apk
 ```
 
@@ -65,16 +68,16 @@ APK rilis ditandatangani dengan debug key bawaan Flutter — cukup untuk dipasan
 lib/main.dart                    Start aplikasi, cek sesi tersimpan
 lib/api.dart                     Klien API (cookie session, HTTPS + CA mkcert), model
 lib/session_store.dart           Alamat server & cookie di penyimpanan privat aplikasi
-lib/offline.dart                 Daftar barang, antrean offline & data reservasi terakhir di HP, kunci client_ref (UUID)
-lib/reservation.dart             Sesi reservasi: progres server + antrean HP, satu barang sekali
-lib/validators.dart              Aturan jumlah, no reservasi & total item (sama dengan server)
+lib/offline.dart                 Daftar barang, antrean offline & data sesi terakhir di HP, kunci client_ref (UUID)
+lib/scan_session.dart            Sesi scan (reservasi / kode masuk): progres server + antrean HP, satu barang sekali, ATK dipisah
+lib/validators.dart              Aturan jumlah, no reservasi, kode masuk & total item (sama dengan server)
 lib/screens/login_screen.dart    Login + alamat server
 lib/screens/home_screen.dart     Pilih IN / OUT, kirim antrean otomatis, banner antrean
 lib/screens/queue_screen.dart    Antrean: menunggu dikirim & ditolak server
 lib/screens/scan_screen.dart     Kamera (mobile_scanner), senter
 lib/screens/quantity_screen.dart Jumlah (keyboard angka; barang Kg boleh berkoma, maks. 3 desimal)
-lib/screens/reservation_screen.dart  OUT: no reservasi + total item, layar progres reservasi
-lib/screens/in_code_screen.dart  Kode Masuk 111.22.33 / ATK.111.22.33 (IN)
+lib/screens/session_screen.dart  Mulai sesi (no reservasi / kode masuk + total item) & layar progres sesi
+lib/screens/in_code_screen.dart  Kode Masuk 111.22.33 / ATK.111.22.33 per barang (IN tanpa sesi, cadangan)
 lib/screens/product_info_screen.dart  Cek Barang: detail barang hasil scan
 lib/screens/result_screen.dart   Kirim transaksi (atau simpan di antrean) & ringkasan hasil
 ```

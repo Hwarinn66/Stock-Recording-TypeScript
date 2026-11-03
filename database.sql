@@ -90,6 +90,18 @@ CREATE TABLE reservations (
  CONSTRAINT chk_reservations_number CHECK (CHAR_LENGTH(reservation_number) = 7),
  CONSTRAINT fk_reservations_user FOREIGN KEY (created_by) REFERENCES users(id)
 ) ENGINE=InnoDB;
+-- Sesi penerimaan per kode masuk (HP): status OPEN sampai barang berbeda yang masuk = total_items.
+CREATE TABLE receipts (
+ id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY, in_code VARCHAR(20) NOT NULL,
+ total_items INT UNSIGNED NOT NULL, status ENUM('OPEN','DONE') NOT NULL DEFAULT 'OPEN',
+ created_by INT UNSIGNED NOT NULL,
+ created_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+ updated_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
+ completed_at DATETIME(3) NULL,
+ UNIQUE KEY uq_receipt_code (in_code), KEY idx_receipts_status (status, created_at),
+ CONSTRAINT chk_receipts_total CHECK (total_items BETWEEN 1 AND 999),
+ CONSTRAINT fk_receipts_user FOREIGN KEY (created_by) REFERENCES users(id)
+) ENGINE=InnoDB;
 CREATE TABLE stock_transactions (
  id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY, transaction_number VARCHAR(40) NOT NULL UNIQUE,
  product_id INT UNSIGNED NOT NULL, location_id INT UNSIGNED NOT NULL,
@@ -104,6 +116,8 @@ CREATE TABLE stock_transactions (
  reservation_id INT UNSIGNED NULL,
  -- Kode Masuk barang IN dari HP: 111.22.33 (barang ATK: ATK.111.22.33).
  in_code VARCHAR(20) NULL,
+ -- Barang masuk yang diterima lewat sesi kode masuk (NULL = transaksi lama / buku darurat).
+ receipt_id INT UNSIGNED NULL,
  -- Kunci pengiriman unik (UUID aplikasi HP / baris buku darurat): kirim ulang tidak tercatat dua kali.
  client_ref VARCHAR(64) NULL,
  actor_id INT UNSIGNED NOT NULL,
@@ -116,6 +130,8 @@ CREATE TABLE stock_transactions (
  FOREIGN KEY(actor_id) REFERENCES users(id),
  KEY idx_transactions_reservation_product (reservation_id, product_id),
  CONSTRAINT fk_transactions_reservation FOREIGN KEY (reservation_id) REFERENCES reservations(id),
+ KEY idx_transactions_receipt_product (receipt_id, product_id), KEY idx_transactions_in_code (in_code),
+ CONSTRAINT fk_transactions_receipt FOREIGN KEY (receipt_id) REFERENCES receipts(id),
  CHECK (stock_before IS NULL OR stock_before >= 0), CHECK(stock_after IS NULL OR stock_after >= 0),
  CHECK(transaction_type='ADJUSTMENT' OR quantity IS NULL OR quantity > 0),
  CHECK(reservation_number IS NULL OR CHAR_LENGTH(reservation_number) = 7),

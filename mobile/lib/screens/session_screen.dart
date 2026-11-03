@@ -5,75 +5,93 @@ import 'package:flutter/services.dart';
 
 import '../api.dart';
 import '../offline.dart';
-import '../reservation.dart';
+import '../scan_session.dart';
 import '../ui.dart';
 import '../validators.dart';
+import 'in_code_screen.dart';
 import 'quantity_screen.dart';
 import 'scan_screen.dart';
 
-/// Barang keluar langkah 1: no reservasi (7 angka). Reservasi baru → isi total item
-/// (jumlah jenis barang) sekali. Reservasi yang sudah dimulai → langsung dilanjutkan.
-class ReservationStartScreen extends StatefulWidget {
-  const ReservationStartScreen({super.key, required this.api});
+/// Langkah 1 barang keluar / masuk: kode sekali di awal (OUT: no reservasi 7 angka; IN:
+/// kode masuk 111.22.33, pilih ATK atau bukan). Kode baru → isi total item (jumlah jenis
+/// barang). Kode yang sudah dimulai → langsung dilanjutkan.
+class SessionStartScreen extends StatefulWidget {
+  const SessionStartScreen({super.key, required this.api, required this.mode});
 
   final ApiClient api;
+  final Mode mode;
 
   @override
-  State<ReservationStartScreen> createState() => _ReservationStartScreenState();
+  State<SessionStartScreen> createState() => _SessionStartScreenState();
 }
 
-class _ReservationStartScreenState extends State<ReservationStartScreen> {
+class _SessionStartScreenState extends State<SessionStartScreen> {
   final _form = GlobalKey<FormState>();
-  final _number = TextEditingController();
+  final _code = TextEditingController();
   final _total = TextEditingController();
-  // true = reservasi belum ada: minta total item.
+  // Barang masuk: kode masuk ATK (ATK.111.22.33) atau bukan ATK (111.22.33).
+  bool _atk = false;
+  // true = kode belum dimulai: minta total item.
   bool _askTotal = false;
-  // true = server tidak terjangkau saat memeriksa no reservasi.
+  // true = server tidak terjangkau saat memeriksa kode.
   bool _offline = false;
   bool _busy = false;
 
   ApiClient get api => widget.api;
+  Mode get mode => widget.mode;
+  bool get _inbound => mode == Mode.inbound;
+
+  /// Kode lengkap yang dikirim ke server.
+  String get _fullCode => _inbound ? fullInCode(_code.text, atk: _atk) : _code.text;
 
   @override
   void dispose() {
-    _number.dispose();
+    _code.dispose();
     _total.dispose();
     super.dispose();
   }
 
-  void _open(ReservationSession session) {
+  void _open(ScanSession session) {
     Navigator.of(context).pushReplacement(
       MaterialPageRoute<void>(
-        settings: const RouteSettings(name: ReservationScreen.routeName),
-        builder: (_) => ReservationScreen(api: api, session: session),
+        settings: const RouteSettings(name: SessionScreen.routeName),
+        builder: (_) => SessionScreen(api: api, session: session),
       ),
     );
   }
 
+  ScanSession _session(SessionInfo info, {bool offline = false}) =>
+      ScanSession(api, info, mode: mode, offline: offline);
+
   /// Sesi dari data terakhir di HP (atau antrean HP) saat server tidak terjangkau.
-  ReservationSession? _fromPhone(String number) {
-    final cached = api.store.offline.cachedReservation(number);
-    if (cached != null) return ReservationSession(api, cached, offline: true);
+  ScanSession? _fromPhone(String code) {
+    final cached = api.store.offline.cachedSession(mode, code);
+    if (cached != null) return _session(cached, offline: true);
     final queued = api.store.offline.pending
-        .where((q) => q.reservationNumber == number && q.reservationTotal != null)
+        .where(
+          (q) => _inbound
+              ? q.mode == Mode.inbound && q.inCode == code && q.receiptTotal != null
+              : q.mode == Mode.outbound && q.reservationNumber == code && q.reservationTotal != null,
+        )
         .firstOrNull;
     if (queued == null) return null;
-    return ReservationSession(
-      api,
-      Reservation(number: number, total: queued.reservationTotal!, taken: 0, items: []),
-      offline: true,
-    );
+    final total = (_inbound ? queued.receiptTotal : queued.reservationTotal)!;
+    return _session(SessionInfo(code: code, total: total, taken: 0, items: []), offline: true);
+  }
+
+  void _restart() {
+    if (_askTotal) setState(() => _askTotal = false);
   }
 
   Future<void> _next() async {
     if (_busy || !_form.currentState!.validate()) return;
-    final number = _number.text;
+    final code = _fullCode;
     setState(() => _busy = true);
     try {
       if (!_askTotal) {
-        await _check(number);
+        await _check(code);
       } else {
-        await _start(number, int.parse(_total.text));
+        await _start(code, int.parse(_total.text));
       }
     } on ApiException catch (error) {
       if (!mounted) return;
@@ -88,11 +106,11 @@ class _ReservationStartScreenState extends State<ReservationStartScreen> {
   }
 
   /// Sudah dimulai → lanjutkan; belum → minta total item.
-  Future<void> _check(String number) async {
+  Future<void> _check(String code) async {
     try {
-      final reservation = await api.reservation(number);
+      final info = await api.session(mode, code);
       if (!mounted) return;
-      if (reservation != null) return _open(ReservationSession(api, reservation));
+      if (info != null) return _open(_session(info));
       setState(() {
         _askTotal = true;
         _offline = false;
@@ -100,7 +118,7 @@ class _ReservationStartScreenState extends State<ReservationStartScreen> {
     } on ApiException catch (error) {
       if (!error.unavailable) rethrow;
       if (!mounted) return;
-      final session = _fromPhone(number);
+      final session = _fromPhone(code);
       if (session != null) return _open(session);
       setState(() {
         _askTotal = true;
@@ -109,43 +127,50 @@ class _ReservationStartScreenState extends State<ReservationStartScreen> {
     }
   }
 
-  Future<void> _start(String number, int total) async {
+  Future<void> _start(String code, int total) async {
     if (!_offline) {
       try {
-        final reservation = await api.createReservation(number, total);
-        if (mounted) _open(ReservationSession(api, reservation));
+        final info = await api.createSession(mode, code, total);
+        if (mounted) _open(_session(info));
         return;
       } on ApiException catch (error) {
-        if (error.code == 'RESERVATION_EXISTS') {
-          // Baru saja dimulai di HP lain: lanjutkan reservasi itu.
-          final reservation = await api.reservation(number);
-          if (!mounted || reservation == null) return;
+        if (error.code == '${mode.sessionError}_EXISTS') {
+          // Baru saja dimulai di HP lain: lanjutkan sesi itu.
+          final info = await api.session(mode, code);
+          if (!mounted || info == null) return;
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(
               content: Text(
-                'Reservasi $number sudah dimulai (total ${reservation.total} item). Dilanjutkan.',
+                '${mode.sessionLabel} $code sudah dimulai (total ${info.total} item). Dilanjutkan.',
               ),
             ),
           );
-          return _open(ReservationSession(api, reservation));
+          return _open(_session(info));
         }
         if (!error.unavailable) rethrow;
       }
     }
     // Offline: sesi dimulai di HP; server membuatnya saat barang pertama terkirim.
-    final local = Reservation(number: number, total: total, taken: 0, items: []);
-    await api.store.offline.rememberReservation(local);
-    if (mounted) _open(ReservationSession(api, local, offline: true));
+    final local = SessionInfo(code: code, total: total, taken: 0, items: []);
+    await api.store.offline.rememberSession(mode, local);
+    if (mounted) _open(_session(local, offline: true));
   }
 
   @override
   Widget build(BuildContext context) {
-    const color = outBlue;
+    final color = modeColor(mode);
+    final theme = Theme.of(context);
+    const codeStyle = TextStyle(
+      fontSize: 32,
+      fontWeight: FontWeight.bold,
+      fontFamily: 'monospace',
+      letterSpacing: 3,
+    );
     return Scaffold(
       appBar: AppBar(
         backgroundColor: color,
         foregroundColor: Colors.white,
-        title: const Text('OUT · No Reservasi'),
+        title: Text('${mode.code} · ${_inbound ? 'Kode Masuk' : 'No Reservasi'}'),
       ),
       body: SafeArea(
         child: Form(
@@ -157,48 +182,89 @@ class _ReservationStartScreenState extends State<ReservationStartScreen> {
                   padding: const EdgeInsets.all(20),
                   children: [
                     if (_askTotal && _offline) ...[const OfflineNotice(), const SizedBox(height: 16)],
-                    Text(
-                      'Masukkan no reservasi ($reservationLength angka)',
-                      style: Theme.of(context).textTheme.titleMedium,
-                    ),
-                    const SizedBox(height: 8),
-                    TextFormField(
-                      key: const Key('reservation'),
-                      controller: _number,
-                      autofocus: true,
-                      keyboardType: TextInputType.number,
-                      inputFormatters: [
-                        ...digitsOnly,
-                        LengthLimitingTextInputFormatter(reservationLength),
-                      ],
-                      maxLength: reservationLength,
-                      textAlign: TextAlign.center,
-                      textInputAction: TextInputAction.next,
-                      style: const TextStyle(
-                        fontSize: 32,
-                        fontWeight: FontWeight.bold,
-                        fontFamily: 'monospace',
-                        letterSpacing: 6,
+                    if (_inbound) ...[
+                      Text('Jenis barang', style: theme.textTheme.titleMedium),
+                      const SizedBox(height: 8),
+                      // Kode masuk ATK dan bukan ATK dipisah, sama seperti di ERP.
+                      SegmentedButton<bool>(
+                        key: const Key('atk'),
+                        segments: const [
+                          ButtonSegment(value: false, label: Text('Bukan ATK')),
+                          ButtonSegment(value: true, label: Text('ATK')),
+                        ],
+                        selected: {_atk},
+                        onSelectionChanged: (value) {
+                          setState(() => _atk = value.first);
+                          _restart();
+                        },
                       ),
-                      decoration: const InputDecoration(hintText: '0000000'),
-                      validator: validateReservation,
-                      // No reservasi diganti: periksa lagi dari awal.
-                      onChanged: (_) {
-                        if (_askTotal) setState(() => _askTotal = false);
-                      },
-                      onFieldSubmitted: (_) => _next(),
-                    ),
-                    const SizedBox(height: 4),
-                    Text(
-                      'Cukup sekali per pengambilan. Reservasi yang belum selesai bisa '
-                      'dilanjutkan dengan no reservasi yang sama.',
-                      style: Theme.of(context).textTheme.bodySmall,
-                    ),
+                      const SizedBox(height: 20),
+                      Text('Masukkan kode masuk', style: theme.textTheme.titleMedium),
+                      const SizedBox(height: 8),
+                      TextFormField(
+                        key: const Key('in-code'),
+                        controller: _code,
+                        autofocus: true,
+                        keyboardType: TextInputType.number,
+                        inputFormatters: [InCodeFormatter()],
+                        textAlign: TextAlign.center,
+                        textInputAction: TextInputAction.next,
+                        style: codeStyle,
+                        decoration: InputDecoration(
+                          hintText: '111.22.33',
+                          prefixText: _atk ? 'ATK.' : null,
+                          prefixStyle: codeStyle.copyWith(color: color),
+                        ),
+                        validator: validateInCode,
+                        onChanged: (_) => _restart(),
+                        onFieldSubmitted: (_) => _next(),
+                      ),
+                      const SizedBox(height: 4),
+                      Text(
+                        '${_atk ? 'Format: ATK.111.22.33, hanya barang ATK.' : 'Format: 111.22.33, hanya barang bukan ATK.'} '
+                        'Ketik 7 angka, titik terisi otomatis. Penerimaan yang belum selesai '
+                        'bisa dilanjutkan dengan kode masuk yang sama.',
+                        style: theme.textTheme.bodySmall,
+                      ),
+                    ] else ...[
+                      Text(
+                        'Masukkan no reservasi ($reservationLength angka)',
+                        style: theme.textTheme.titleMedium,
+                      ),
+                      const SizedBox(height: 8),
+                      TextFormField(
+                        key: const Key('reservation'),
+                        controller: _code,
+                        autofocus: true,
+                        keyboardType: TextInputType.number,
+                        inputFormatters: [
+                          ...digitsOnly,
+                          LengthLimitingTextInputFormatter(reservationLength),
+                        ],
+                        maxLength: reservationLength,
+                        textAlign: TextAlign.center,
+                        textInputAction: TextInputAction.next,
+                        style: codeStyle.copyWith(letterSpacing: 6),
+                        decoration: const InputDecoration(hintText: '0000000'),
+                        validator: validateReservation,
+                        // No reservasi diganti: periksa lagi dari awal.
+                        onChanged: (_) => _restart(),
+                        onFieldSubmitted: (_) => _next(),
+                      ),
+                      const SizedBox(height: 4),
+                      Text(
+                        'Cukup sekali per pengambilan. Reservasi yang belum selesai bisa '
+                        'dilanjutkan dengan no reservasi yang sama.',
+                        style: theme.textTheme.bodySmall,
+                      ),
+                    ],
                     if (_askTotal) ...[
                       const SizedBox(height: 24),
                       Text(
-                        'Reservasi baru. Total item yang akan diambil',
-                        style: Theme.of(context).textTheme.titleMedium,
+                        _inbound
+                            ? 'Kode masuk baru. Total item yang masuk'
+                            : 'Reservasi baru. Total item yang akan diambil',
+                        style: theme.textTheme.titleMedium,
                       ),
                       const SizedBox(height: 8),
                       TextFormField(
@@ -217,8 +283,8 @@ class _ReservationStartScreenState extends State<ReservationStartScreen> {
                       const SizedBox(height: 4),
                       Text(
                         'Jumlah jenis barang yang berbeda. Setiap barang di-scan sekali, '
-                        'lalu isi jumlah yang diambil.',
-                        style: Theme.of(context).textTheme.bodySmall,
+                        'lalu isi jumlah yang ${_inbound ? 'masuk' : 'diambil'}.',
+                        style: theme.textTheme.bodySmall,
                       ),
                     ],
                   ],
@@ -248,21 +314,21 @@ class _ReservationStartScreenState extends State<ReservationStartScreen> {
   }
 }
 
-/// Barang keluar langkah 2: progres reservasi, scan barang satu per satu sampai
-/// semua item terambil. User boleh keluar kapan saja dan melanjutkan nanti.
-class ReservationScreen extends StatefulWidget {
-  const ReservationScreen({super.key, required this.api, required this.session});
+/// Langkah 2: progres sesi, scan barang satu per satu sampai semua item tercatat.
+/// User boleh keluar kapan saja dan melanjutkan nanti dengan kode yang sama.
+class SessionScreen extends StatefulWidget {
+  const SessionScreen({super.key, required this.api, required this.session});
 
-  static const routeName = '/reservation';
+  static const routeName = '/session';
   final ApiClient api;
-  final ReservationSession session;
+  final ScanSession session;
 
   @override
-  State<ReservationScreen> createState() => _ReservationScreenState();
+  State<SessionScreen> createState() => _SessionScreenState();
 }
 
-class _ReservationScreenState extends State<ReservationScreen> with RouteAware {
-  ReservationSession get session => widget.session;
+class _SessionScreenState extends State<SessionScreen> with RouteAware {
+  ScanSession get session => widget.session;
 
   @override
   void didChangeDependencies() {
@@ -271,7 +337,7 @@ class _ReservationScreenState extends State<ReservationScreen> with RouteAware {
     if (route != null) routeObserver.subscribe(this, route);
   }
 
-  /// Kembali dari scan: ambil progres terbaru (barang mungkin juga diambil dari HP lain).
+  /// Kembali dari scan: ambil progres terbaru (barang mungkin juga dari HP lain).
   @override
   void didPopNext() => unawaited(session.refresh().catchError((_) {}));
 
@@ -286,7 +352,7 @@ class _ReservationScreenState extends State<ReservationScreen> with RouteAware {
     Navigator.of(context).push(
       MaterialPageRoute<void>(
         settings: const RouteSettings(name: ScanScreen.routeName),
-        builder: (_) => ScanScreen(api: widget.api, mode: Mode.outbound, session: session),
+        builder: (_) => ScanScreen(api: widget.api, mode: session.mode, session: session),
       ),
     );
   }
@@ -294,7 +360,7 @@ class _ReservationScreenState extends State<ReservationScreen> with RouteAware {
   Future<void> _changeTotal() async {
     final total = await showDialog<int>(
       context: context,
-      builder: (_) => _TotalDialog(current: session.total, min: session.taken),
+      builder: (_) => _TotalDialog(current: session.total, min: session.taken, verb: session.mode.sessionVerb),
     );
     if (total == null || total == session.total || !mounted) return;
     try {
@@ -313,6 +379,9 @@ class _ReservationScreenState extends State<ReservationScreen> with RouteAware {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final mode = session.mode;
+    final color = modeColor(mode);
+    final sign = mode == Mode.inbound ? '+' : '−';
     return ListenableBuilder(
       listenable: session,
       builder: (context, _) {
@@ -323,9 +392,9 @@ class _ReservationScreenState extends State<ReservationScreen> with RouteAware {
         final waiting = session.pendingItems.length;
         return Scaffold(
           appBar: AppBar(
-            backgroundColor: outBlue,
+            backgroundColor: color,
             foregroundColor: Colors.white,
-            title: Text('OUT · ${session.number}'),
+            title: Text('${mode.code} · ${session.code}'),
           ),
           body: SafeArea(
             child: ListView(
@@ -346,7 +415,11 @@ class _ReservationScreenState extends State<ReservationScreen> with RouteAware {
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        Text('No reservasi ${session.number}', style: theme.textTheme.bodyMedium),
+                        Text(
+                          '${mode.sessionCodeLabel} ${session.code}'
+                          '${mode == Mode.inbound ? (session.atk ? ' · barang ATK' : ' · barang bukan ATK') : ''}',
+                          style: theme.textTheme.bodyMedium,
+                        ),
                         const SizedBox(height: 6),
                         Text(
                           '$taken dari $total barang',
@@ -363,7 +436,9 @@ class _ReservationScreenState extends State<ReservationScreen> with RouteAware {
                         ),
                         const SizedBox(height: 10),
                         Text(
-                          done ? 'SELESAI · semua barang sudah diambil' : 'BELUM SELESAI · kurang ${total - taken} barang',
+                          done
+                              ? 'SELESAI · semua barang sudah ${mode.sessionVerb}'
+                              : 'BELUM SELESAI · kurang ${total - taken} barang',
                           key: const Key('status'),
                           style: TextStyle(
                             fontWeight: FontWeight.bold,
@@ -380,7 +455,7 @@ class _ReservationScreenState extends State<ReservationScreen> with RouteAware {
                     key: const Key('scan'),
                     onPressed: _scan,
                     style: FilledButton.styleFrom(
-                      backgroundColor: outBlue,
+                      backgroundColor: color,
                       minimumSize: const Size.fromHeight(56),
                     ),
                     icon: const Icon(Icons.qr_code_scanner),
@@ -404,7 +479,7 @@ class _ReservationScreenState extends State<ReservationScreen> with RouteAware {
                   label: const Text('Ubah total item'),
                 ),
                 const SizedBox(height: 12),
-                Text('Barang yang sudah diambil', style: theme.textTheme.titleMedium),
+                Text('Barang yang sudah ${mode.sessionVerb}', style: theme.textTheme.titleMedium),
                 const SizedBox(height: 4),
                 if (items.isEmpty)
                   const Padding(
@@ -415,12 +490,14 @@ class _ReservationScreenState extends State<ReservationScreen> with RouteAware {
                   ListTile(
                     contentPadding: EdgeInsets.zero,
                     leading: CircleAvatar(
-                      backgroundColor: item.pending ? const Color(0xFFFEF3C7) : const Color(0xFFDBEAFE),
+                      backgroundColor: item.pending
+                          ? const Color(0xFFFEF3C7)
+                          : (mode == Mode.inbound ? const Color(0xFFDCFCE7) : const Color(0xFFDBEAFE)),
                       child: Text('${i + 1}'),
                     ),
                     title: Text('${item.sku} · ${item.name}', maxLines: 2, overflow: TextOverflow.ellipsis),
                     subtitle: Text(
-                      '−${formatQty(item.quantity)} ${item.unit} · ${shortTime(item.scannedAt)}'
+                      '$sign${formatQty(item.quantity)} ${item.unit} · ${shortTime(item.scannedAt)}'
                       '${item.pending ? ' · tersimpan di HP' : ''}',
                     ),
                     trailing: Icon(
@@ -438,7 +515,8 @@ class _ReservationScreenState extends State<ReservationScreen> with RouteAware {
                   ),
                   const SizedBox(height: 6),
                   Text(
-                    'Status tetap belum selesai. Lanjutkan dengan no reservasi ${session.number}.',
+                    'Status tetap belum selesai. Lanjutkan dengan '
+                    '${mode.sessionCodeLabel.toLowerCase()} ${session.code}.',
                     textAlign: TextAlign.center,
                     style: theme.textTheme.bodySmall,
                   ),
@@ -477,12 +555,13 @@ class _Note extends StatelessWidget {
   }
 }
 
-/// Ubah total item: minimal sebanyak barang yang sudah diambil.
+/// Ubah total item: minimal sebanyak barang yang sudah tercatat.
 class _TotalDialog extends StatefulWidget {
-  const _TotalDialog({required this.current, required this.min});
+  const _TotalDialog({required this.current, required this.min, required this.verb});
 
   final int current;
   final int min;
+  final String verb;
 
   @override
   State<_TotalDialog> createState() => _TotalDialogState();
@@ -517,9 +596,9 @@ class _TotalDialogState extends State<_TotalDialog> {
           inputFormatters: [...digitsOnly, LengthLimitingTextInputFormatter(3)],
           decoration: InputDecoration(
             suffixText: 'item',
-            helperText: 'Minimal $min (barang yang sudah diambil).',
+            helperText: 'Minimal $min (barang yang sudah ${widget.verb}).',
           ),
-          validator: (value) => validateReservationTotal(value, min: min),
+          validator: (value) => validateReservationTotal(value, min: min, verb: widget.verb),
           onFieldSubmitted: (_) => _save(),
         ),
       ),

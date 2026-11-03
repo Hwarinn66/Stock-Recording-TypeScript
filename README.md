@@ -6,7 +6,7 @@ Untuk menjalankan secara online gratis (Vercel + database Aiven), ikuti [DEPLOY-
 
 ## Alur utama
 
-Tambah barang → stok awal 0 + UUID QR otomatis → cetak label → buka aplikasi **Warehouse Scanner** di HP → IN: scan QR → ketik jumlah → kode masuk → Selesai. OUT: ketik **no reservasi 7 angka** dan **total item** sekali → scan barang satu per satu → ketik jumlah → Selesai, sampai semua item terambil. Setiap scan langsung memperbarui stok dan histori lewat SQL transaction → dashboard menerima SSE. No reservasi adalah identitas pengambilan dan divisi pengambil; **Riwayat reservasi** di dashboard menampilkan satu baris per reservasi (klik untuk melihat barangnya), dan menu **Riwayat → No reservasi** menampilkan semua barang keluar satu per satu.
+Tambah barang → stok awal 0 + UUID QR otomatis → cetak label → buka aplikasi **Warehouse Scanner** di HP → IN: pilih ATK/bukan ATK, ketik **kode masuk** dan **total item** sekali → scan barang satu per satu → ketik jumlah → Selesai, sampai semua item masuk. OUT: ketik **no reservasi 7 angka** dan **total item** sekali → scan barang satu per satu → ketik jumlah → Selesai, sampai semua item terambil. Setiap scan langsung memperbarui stok dan histori lewat SQL transaction → dashboard menerima SSE. No reservasi adalah identitas pengambilan dan divisi pengambil; **Riwayat reservasi** di dashboard menampilkan satu baris per reservasi (klik untuk melihat barangnya), dan menu **Riwayat → No reservasi** menampilkan semua barang keluar satu per satu. Barang masuk sama: **Riwayat penerimaan** di dashboard satu baris per kode masuk, menu **Riwayat → Barang masuk** tetap satu per satu.
 
 Fitur: dashboard 7 indikator, master barang/kategori/ruangan/blok/rak/posisi, detail dan histori barang, regenerasi QR, label cetak, antrean multi-barang, adjustment stock opname dengan alasan, filter/search/sorting/pagination, CSV, soft disable barang, login server session, feedback suara/vibrasi HP. Semua data operasional berasal dari MySQL; browser tidak mengakses database.
 
@@ -190,6 +190,25 @@ Di web:
 
 Butuh **`migrations/013_reservations.sql`** sekali (tabel `reservations` + kolom `stock_transactions.reservation_id`), dijalankan **sebelum** source baru aktif. Lalu pasang **APK 1.3.0** di semua HP; APK 1.3.0 butuh server versi ini.
 
+## Sesi kode masuk barang masuk (aplikasi HP 1.4.0)
+
+Barang masuk sekarang diterima per **kode masuk**, sama seperti reservasi pada barang keluar:
+
+1. **IN** → pilih **Bukan ATK** atau **ATK**, lalu ketik **kode masuk** sekali (7 angka, titik otomatis: `111.22.33`; ATK menjadi `ATK.111.22.33`).
+2. Kode masuk baru → ketik **total item** = jumlah **jenis barang** yang masuk (1–999).
+3. **Scan barang** satu per satu → ketik jumlah yang masuk → Selesai (kode masuk tidak diketik lagi). Stok bertambah **setiap scan**; layar menampilkan progres, mis. **3 dari 5 barang**.
+4. Status **Belum selesai** sampai jumlah barang berbeda yang di-scan = total item, lalu otomatis **Selesai**.
+5. User **boleh keluar** kapan saja dan melanjutkan dengan kode masuk yang sama, juga dari HP lain.
+
+Aturannya sama dengan sesi reservasi (satu barang sekali → 409 `RECEIPT_DUPLICATE`, sudah selesai → 409 `RECEIPT_DONE`, ubah total item, offline), ditambah: **ATK dan bukan ATK dipisah**. Kode masuk `ATK.…` hanya menerima barang kategori ATK, kode lain hanya barang bukan ATK; barang yang tidak cocok ditolak di HP dan di server (`RECEIPT_KIND_MISMATCH`), stok tidak berubah. Kode masuk tidak bisa direvisi di Riwayat, jadi barang tidak pernah pindah sesi.
+
+Di web:
+
+- **Dashboard → Riwayat penerimaan (barang masuk)**: satu baris per kode masuk, sama seperti Riwayat reservasi: jumlah barang yang masuk, progres & status, scan terakhir, petugas; **klik baris** untuk melihat barangnya. Kode masuk lama (sebelum fitur ini, juga dari APK ≤ 1.3.0) tampil tanpa progres/status.
+- **Riwayat → Barang masuk** tetap seperti sebelumnya: semua barang masuk satu per satu.
+
+Butuh **`migrations/014_receipts.sql`** sekali (tabel `receipts` + kolom `stock_transactions.receipt_id`), dijalankan **sebelum** source baru aktif. APK 1.4.0 butuh server versi ini. APK 1.3.0 tetap bisa dipakai (barang masuk dicatat dengan kode masuk per barang, tanpa sesi), tetapi pasang 1.4.0 di semua HP agar penerimaan tercatat per sesi.
+
 ## Backup otomatis database online (GitHub Actions)
 
 Setiap hari pukul **01.00 WIB**, server GitHub menyalin seluruh database Aiven (laptop boleh mati), mengompres, lalu **mengenkripsi** salinannya (AES-256) dengan kata sandi Anda. Repo ini publik, sehingga tanpa kata sandi itu file backup tidak bisa dibaca siapa pun. Backup disimpan **30 hari** di tab **Actions → Backup database → (pilih run) → Artifacts**. Sebelum disimpan, workflow memastikan tabel inti ada, dump selesai sampai akhir, dan file terenkripsi bisa dibuka kembali dengan isi identik. Bila gagal, run berwarna merah dan GitHub mengirim email.
@@ -315,8 +334,9 @@ Lihat [Next.js CLI — HTTPS](https://nextjs.org/docs/app/api-reference/cli/next
 
 - **Tambah Barang**: Kode Barang unik, nama, kategori, satuan, ruangan, blok, rak, dan nomor penempatan wajib. Nomor penempatan diketik langsung; posisi dibuat otomatis bila belum ada dan ditolak jika sudah ditempati barang aktif. Tidak ada input stok. Barang tidak memakai foto.
 - **QR Barang**: download SVG, Print QR dengan nama/SKU/lokasi lengkap dan ruangan. QR hanya memuat UUID, bukan SKU atau nomor rak. Regenerate membatalkan token lama; cetak dan ganti label setelahnya.
-- **Aplikasi scanner HP**: IN → scan QR → jumlah → kode masuk → Selesai. OUT → no reservasi + total item sekali → scan QR → jumlah → Selesai, berulang sampai semua item terambil (lihat *Sesi reservasi barang keluar*). Backend memeriksa barang (aktif, tidak pending, OUT tidak stok 0); jumlah memakai keyboard angka, OUT tidak boleh melebihi stok. Transaksi tersimpan **APPROVED** dan stok langsung berubah, tanpa approval komputer. Kamera mati selama layar jumlah/hasil terbuka; **Scan berikutnya** menyalakannya lagi.
+- **Aplikasi scanner HP**: IN → ATK/bukan ATK + kode masuk + total item sekali → scan QR → jumlah → Selesai, berulang sampai semua item masuk (lihat *Sesi kode masuk barang masuk*). OUT → no reservasi + total item sekali → scan QR → jumlah → Selesai, berulang sampai semua item terambil (lihat *Sesi reservasi barang keluar*). Backend memeriksa barang (aktif, tidak pending, OUT tidak stok 0); jumlah memakai keyboard angka, OUT tidak boleh melebihi stok. Transaksi tersimpan **APPROVED** dan stok langsung berubah, tanpa approval komputer. Kamera mati selama layar jumlah/hasil terbuka; **Scan berikutnya** menyalakannya lagi.
 - **Riwayat reservasi** (dashboard): per no reservasi, progres & status sesi HP; klik untuk melihat barang yang diambil.
+- **Riwayat penerimaan** (dashboard): per kode masuk, progres & status sesi HP; klik untuk melihat barang yang masuk.
 - **No Reservasi**: tab di menu **Riwayat**: semua barang keluar satu per satu dengan no reservasi, waktu, kode/nama barang, qty, lokasi, petugas (akun yang scan), nomor transaksi. Pencarian riwayat menerima no reservasi; CSV `riwayat-reservations` menaruh no reservasi di kolom pertama.
 - **Transaksi Pending**: daftarnya ada di Dashboard (bagian Transaksi menunggu). Alur lama (scan → approve di komputer) masih tersedia untuk pending yang sudah ada dan client API lama (`POST /api/scan`). Isi jumlah positif (bilangan bulat; barang Kg boleh berkoma maks. 3 desimal), lihat preview, Approve atau Batalkan.
 - **Koreksi Stok**: buka barang di menu **Barang** → **Edit**; bagian **Koreksi stok** ada di bawah form data barang (satu halaman dengan Edit Barang). Kolom jumlah otomatis terisi stok di web; ganti dengan **jumlah yang sebenarnya ada di gudang** (mis. web 10, gudang 8 → ketik 8). Selisih dihitung otomatis. Pilih alasan (Rusak, Hilang, Kedaluwarsa, Ditemukan, Selisih stock opname, Salah input, Lainnya + keterangan). Backend memeriksa stok yang dilihat user masih sama; jika berubah, muat ulang. Quantity histori koreksi adalah selisih (dapat negatif); riwayatnya ada di detail barang dan di **Riwayat → Koreksi stok**.
@@ -353,12 +373,17 @@ Semua API berbasis JSON kecuali QR SVG, CSV dan SSE. Autentikasi menggunakan ses
 | POST         | `/api/auth/logout`                                                | logout session                                     |
 | GET          | `/api/auth/me`                                                    | user aktif                                         |
 | GET          | `/api/scan/:qr_token?mode=IN\|OUT`                                | cek barang hasil scan (aplikasi HP)                |
-| POST         | `/api/transactions`                                               | `{qr_token,mode,quantity,reservation_number?,reservation_total?,in_code?,client_ref?,recorded_at?}`; OUT wajib no reservasi 7 angka, IN wajib kode masuk `111.22.33` (ATK: `ATK.111.22.33`); stok langsung berubah. `reservation_total` = barang ini bagian dari sesi reservasi (dibuat bila belum ada; dobel → 409 `RESERVATION_DUPLICATE`, sudah selesai → 409 `RESERVATION_DONE`); jawaban berisi `reservation` (progres). `client_ref` (UUID) sama = dijawab dengan transaksi yang sudah ada (`replayed:true`); `recorded_at` (ISO, maks. 7 hari lalu) untuk antrean offline |
+| POST         | `/api/transactions`                                               | `{qr_token,mode,quantity,reservation_number?,reservation_total?,in_code?,receipt_total?,client_ref?,recorded_at?}`; OUT wajib no reservasi 7 angka, IN wajib kode masuk `111.22.33` (ATK: `ATK.111.22.33`); stok langsung berubah. `reservation_total` = barang ini bagian dari sesi reservasi (dibuat bila belum ada; dobel → 409 `RESERVATION_DUPLICATE`, sudah selesai → 409 `RESERVATION_DONE`); jawaban berisi `reservation` (progres). `receipt_total` = sama untuk sesi kode masuk (`RECEIPT_DUPLICATE`, `RECEIPT_DONE`, ATK tidak cocok → 422 `RECEIPT_KIND_MISMATCH`); jawaban berisi `receipt`. `client_ref` (UUID) sama = dijawab dengan transaksi yang sudah ada (`replayed:true`); `recorded_at` (ISO, maks. 7 hari lalu) untuk antrean offline |
 | GET          | `/api/reservation-history`                                        | Riwayat reservasi dashboard, per no reservasi (termasuk tanpa sesi): `q`, `status=OPEN\|DONE`, `page`, `limit` |
 | GET          | `/api/reservation-history/:no`                                    | Barang yang diambil dengan no reservasi itu + sesi (bila ada); `in_session` per barang |
 | POST         | `/api/reservations`                                               | `{reservation_number,total_items}`: mulai sesi; sudah ada → 409 `RESERVATION_EXISTS` |
 | GET          | `/api/reservations/:no`                                           | Sesi + barang yang sudah diambil; belum ada → 404 `RESERVATION_NOT_FOUND` |
 | PATCH        | `/api/reservations/:no`                                           | `{total_items}`: ubah total (tidak boleh kurang dari yang sudah diambil) |
+| GET          | `/api/receipt-history`                                            | Riwayat penerimaan dashboard, per kode masuk (termasuk tanpa sesi): `q`, `status=OPEN\|DONE`, `page`, `limit` |
+| GET          | `/api/receipt-history/:code`                                      | Barang yang masuk dengan kode masuk itu + sesi (bila ada); `in_session` per barang |
+| POST         | `/api/receipts`                                                   | `{in_code,total_items}`: mulai sesi kode masuk; sudah ada → 409 `RECEIPT_EXISTS` |
+| GET          | `/api/receipts/:code`                                             | Sesi + barang yang sudah masuk; belum ada → 404 `RECEIPT_NOT_FOUND` |
+| PATCH        | `/api/receipts/:code`                                             | `{total_items}`: ubah total (tidak boleh kurang dari yang sudah masuk) |
 | GET          | `/api/product-info/:qr_token`                                     | detail barang untuk halaman Cek Barang (HP)        |
 | GET          | `/api/catalog`                                                    | barang aktif + `qr_token` untuk disimpan di HP (scan offline) |
 | GET          | `/api/backup/excel`                                               | unduh cadangan Excel (stok + riwayat 90 hari)      |
@@ -433,7 +458,9 @@ Suite menguji create/QR/stock 0, IN/OUT, concurrent scan antar-mode, cancel/unlo
 | Test | Langkah                                       | Hasil yang diharapkan                        |
 | ---- | --------------------------------------------- | -------------------------------------------- |
 | 1    | Buat BRG-004 pada A.03.01                     | Stock 0, QR dapat diunduh/cetak              |
-| 2    | Aplikasi HP: IN → scan → ketik 10 → Selesai   | Stock langsung 10, histori masuk APPROVED    |
+| 2    | Aplikasi HP: IN → bukan ATK, kode 111.22.33, total 2 → scan → ketik 10 | Stock langsung 10, histori masuk APPROVED; progres 1 dari 2 |
+| 2a   | Pada kode masuk itu, scan barang kategori ATK | Ditolak: barang ATK, stok tetap              |
+| 2b   | Dashboard → Riwayat penerimaan → klik 111.22.33 | Muncul barang yang masuk; status Belum selesai 1/2 |
 | 3    | Aplikasi HP: OUT → reservasi 0012345, total 2 → scan → 5 | Stock 5; progres 1 dari 2, Belum selesai |
 | 3a   | Scan barang yang sama lagi pada reservasi itu | Ditolak: sudah diambil, stok tetap         |
 | 3b   | Keluar, lalu OUT → 0012345 lagi → scan barang lain | Lanjut dari 1/2 → 2/2, status Selesai |

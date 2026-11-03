@@ -16,6 +16,7 @@ import {
   refreshReservation,
   reservationProgress,
 } from "./reservations";
+import { RECEIPT, batchProgress, claimBatchItem, refreshBatch } from "./scan-batches";
 export const productColumns =
   "p.id,p.sku,p.name,p.category_id,p.unit,p.movement_class,p.stock,p.min_stock,p.location_id,p.qr_token,p.description,p.active,p.created_at,p.updated_at";
 export type LockedProduct = Omit<Product, "category_name">;
@@ -146,6 +147,7 @@ async function recorded(ref: string) {
     reservation: t.reservation_id
       ? await reservationProgress(t.reservation_id)
       : null,
+    receipt: t.receipt_id ? await batchProgress(RECEIPT, t.receipt_id) : null,
     replayed: true,
   };
 }
@@ -189,7 +191,8 @@ export async function productInfo(token: string) {
 }
 // Aplikasi scanner HP: transaksi langsung APPROVED dan stok langsung berubah.
 // Barang keluar dengan `reservation_total` = bagian dari sesi reservasi (HP 1.3.0):
-// ditautkan ke reservasinya, barang sama ditolak, status selesai otomatis.
+// ditautkan ke reservasinya, barang sama ditolak, status selesai otomatis. Barang masuk
+// dengan `receipt_total` = bagian dari sesi kode masuk (HP 1.4.0), aturan yang sama.
 // `client_ref` (UUID dari HP) membuat kiriman ulang aman: sinyal putus setelah server
 // menyimpan, atau antrean offline yang terkirim dua kali, tidak mencatat transaksi kedua.
 export async function record(
@@ -199,6 +202,7 @@ export async function record(
     quantity: number;
     reservation_number?: string;
     reservation_total?: number;
+    receipt_total?: number;
     client_ref?: string;
     recorded_at?: string;
     in_code?: string;
@@ -230,6 +234,15 @@ export async function record(
       );
       const inCode = input.mode === "IN" ? (input.in_code ?? "") : null;
       const atk = isAtkCategory(category?.name);
+      // Sesi kode masuk: satu kode hanya untuk barang ATK atau hanya barang bukan ATK.
+      if (inCode && input.receipt_total !== undefined && !validInCode(inCode, atk))
+        throw new AppError(
+          "RECEIPT_KIND_MISMATCH",
+          atk
+            ? `Barang ini ATK. Kode masuk ${inCode} untuk barang bukan ATK; mulai kode masuk ATK (ATK.111.22.33) untuk barang ini.`
+            : `Barang ini bukan ATK. Kode masuk ${inCode} hanya untuk barang ATK; mulai kode masuk bukan ATK (111.22.33) untuk barang ini.`,
+          422,
+        );
       if (inCode !== null && !validInCode(inCode, atk))
         throw new AppError(
           "INVALID_IN_CODE",
@@ -249,6 +262,16 @@ export async function record(
               at,
             })
           : null;
+      const receiptId =
+        input.mode === "IN" && inCode && input.receipt_total !== undefined
+          ? await claimBatchItem(RECEIPT, conn, {
+              code: inCode,
+              total_items: input.receipt_total,
+              product_id: p.id,
+              userId,
+              at,
+            })
+          : null;
       const number = await nextNumber(
         input.mode,
         conn,
@@ -261,7 +284,7 @@ export async function record(
         conn,
       );
       const result = await execute(
-        "INSERT INTO stock_transactions(transaction_number,product_id,location_id,location_code,room_name,transaction_type,quantity,stock_before,stock_after,status,reservation_number,reservation_id,in_code,client_ref,notes,scanned_at,approved_at,actor_id) VALUES (?,?,?,?,?,?,?,?,?,'APPROVED',?,?,?,?,?,COALESCE(?,UTC_TIMESTAMP(3)),COALESCE(?,UTC_TIMESTAMP(3)),?)",
+        "INSERT INTO stock_transactions(transaction_number,product_id,location_id,location_code,room_name,transaction_type,quantity,stock_before,stock_after,status,reservation_number,reservation_id,in_code,receipt_id,client_ref,notes,scanned_at,approved_at,actor_id) VALUES (?,?,?,?,?,?,?,?,?,'APPROVED',?,?,?,?,?,?,COALESCE(?,UTC_TIMESTAMP(3)),COALESCE(?,UTC_TIMESTAMP(3)),?)",
         [
           number,
           p.id,
@@ -275,6 +298,7 @@ export async function record(
           input.reservation_number ?? null,
           reservationId,
           inCode,
+          receiptId,
           ref,
           at ? "Dikirim dari antrean offline HP" : null,
           when,
@@ -286,6 +310,7 @@ export async function record(
       const reservation = reservationId
         ? await refreshReservation(reservationId, conn)
         : null;
+      const receipt = receiptId ? await refreshBatch(RECEIPT, receiptId, conn) : null;
       await publish(conn, "transaction");
       return {
         id: result.insertId,
@@ -298,6 +323,7 @@ export async function record(
         in_code: inCode,
         product: { ...p, category_name: category?.name ?? null },
         reservation,
+        receipt,
         replayed: false,
       };
     });

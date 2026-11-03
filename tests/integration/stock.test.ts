@@ -46,6 +46,7 @@ before(async () => {
   await execute("DELETE FROM stock_events");
   await execute("DELETE FROM stock_transactions");
   await execute("DELETE FROM reservations");
+  await execute("DELETE FROM receipts");
   await execute("DELETE FROM products");
   await execute("DELETE FROM locations");
   await execute("DELETE FROM racks");
@@ -1067,5 +1068,98 @@ test("sesi reservasi HP: total item, barang dobel ditolak, selesai otomatis, lan
     assert.equal(legacy.session, null);
     assert.deepEqual(legacy.items.map((i) => i.sku), ["RSV-B"]);
     await assert.rejects(reservationHistoryDetail("7999999"), { code: "RESERVATION_NOT_FOUND" });
+  });
+});
+
+test("sesi kode masuk HP: barang masuk per kode masuk, ATK dipisah, selesai otomatis, riwayat penerimaan", async (t) => {
+  const { createReceipt, getReceipt, setReceiptTotal, receiptHistory, receiptHistoryDetail } = await import(
+    "../../src/services/receipts"
+  );
+  const { recordSchema } = await import("../../src/validators");
+  await execute("INSERT IGNORE INTO categories(name) VALUES ('ATK')");
+  const [{ id: atkCategory }] = await rows<{ id: number }>("SELECT id FROM categories WHERE name='ATK'");
+  const make = async (sku: string, position: number, categoryId = category) => {
+    const id = (
+      await createProduct({ sku, name: `Barang ${sku}`, unit: "PCS", category_id: categoryId, rack_id: rack, position_number: position })
+    ).id;
+    const [{ qr_token }] = await rows<{ qr_token: string }>("SELECT qr_token FROM products WHERE id=?", [id]);
+    return { id, qr_token };
+  };
+  const [a, b, c, pen] = await Promise.all([
+    make("RCV-A", 101),
+    make("RCV-B", 102),
+    make("RCV-C", 103),
+    make("RCV-ATK", 104, atkCategory),
+  ]);
+  const receive = (qr_token: string, in_code: string, total = 2, extra: Record<string, unknown> = {}) =>
+    record({ qr_token, mode: "IN", quantity: 5, in_code, receipt_total: total, ...extra }, user);
+  const stockOf = async (id: number) =>
+    (await rows<{ stock: number }>("SELECT stock FROM products WHERE id=?", [id]))[0].stock;
+
+  await t.test("scan sampai total item; barang sama & barang ATK ditolak; lalu selesai", async () => {
+    const started = await createReceipt({ in_code: "216.09.26", total_items: 2 }, user);
+    assert.deepEqual([started.code, started.in_code, started.taken, started.status], ["216.09.26", "216.09.26", 0, "OPEN"]);
+    await assert.rejects(createReceipt({ in_code: "216.09.26", total_items: 3 }, user), { code: "RECEIPT_EXISTS" });
+    const first = await receive(a.qr_token, "216.09.26");
+    assert.deepEqual(first.receipt, { in_code: "216.09.26", total_items: 2, taken: 1, status: "OPEN" });
+    assert.equal(first.reservation, null);
+    assert.equal(await stockOf(a.id), 5, "stok bertambah setiap scan");
+    await assert.rejects(receive(a.qr_token, "216.09.26"), { code: "RECEIPT_DUPLICATE" });
+    await assert.rejects(receive(pen.qr_token, "216.09.26"), { code: "RECEIPT_KIND_MISMATCH" });
+    assert.deepEqual([await stockOf(a.id), await stockOf(pen.id)], [5, 0]);
+    assert.equal((await receive(b.qr_token, "216.09.26")).receipt?.status, "DONE");
+    await assert.rejects(receive(c.qr_token, "216.09.26"), { code: "RECEIPT_DONE" });
+    const done = await getReceipt("216.09.26");
+    assert.deepEqual(done.items.map((i) => i.sku), ["RCV-A", "RCV-B"]);
+    assert.ok(done.completed_at);
+  });
+
+  await t.test("kode masuk ATK dimulai saat offline: hanya barang ATK", async () => {
+    const at = new Date(Date.now() - 1800000);
+    const r = await receive(pen.qr_token, "ATK.011.11.25", 1, { client_ref: randomUUID(), recorded_at: at.toISOString() });
+    assert.deepEqual(r.receipt, { in_code: "ATK.011.11.25", total_items: 1, taken: 1, status: "DONE" });
+    assert.equal((await getReceipt("ATK.011.11.25")).created_at.slice(0, 19), sqlDateTime(at));
+    await createReceipt({ in_code: "ATK.012.11.25", total_items: 2 }, user);
+    await assert.rejects(receive(c.qr_token, "ATK.012.11.25"), { code: "RECEIPT_KIND_MISMATCH" });
+  });
+
+  await t.test("ubah total: tidak kurang dari yang sudah masuk, dibuka lagi bila ditambah", async () => {
+    await assert.rejects(setReceiptTotal("216.09.26", 1), { code: "RECEIPT_TOTAL_TOO_SMALL" });
+    assert.equal((await setReceiptTotal("216.09.26", 3)).status, "OPEN");
+    assert.equal((await receive(c.qr_token, "216.09.26")).receipt?.status, "DONE");
+    await assert.rejects(getReceipt("999.99.98"), { code: "RECEIPT_NOT_FOUND" });
+  });
+
+  await t.test("riwayat penerimaan dashboard: per kode masuk, termasuk barang masuk tanpa sesi", async () => {
+    // HP lama (tanpa total) dengan kode yang sama: tercatat, tetapi di luar sesi.
+    await record({ qr_token: a.qr_token, mode: "IN", quantity: 1, in_code: "216.09.26" }, user);
+    await record({ qr_token: b.qr_token, mode: "IN", quantity: 1, in_code: "777.66.55" }, user);
+    const all = await receiptHistory({ q: "216.09.26", page: 1, limit: 20 });
+    assert.deepEqual(
+      all.items.map((r) => [r.code, r.item_count, r.taken, r.total_items, r.status]),
+      [["216.09.26", 3, 3, 3, "DONE"]],
+    );
+    const legacy = await receiptHistory({ q: "777.66.55", page: 1, limit: 20 });
+    assert.deepEqual(legacy.items.map((r) => [r.code, r.item_count, r.status]), [["777.66.55", 1, null]]);
+    const open = await receiptHistory({ q: "ATK.", status: "OPEN", page: 1, limit: 20 });
+    assert.deepEqual(open.items.map((r) => r.code), ["ATK.012.11.25"]);
+    const detail = await receiptHistoryDetail("216.09.26");
+    assert.deepEqual(
+      detail.items.map((i) => [i.sku, i.in_session]),
+      [["RCV-A", true], ["RCV-B", true], ["RCV-C", true], ["RCV-A", false]],
+    );
+    assert.equal(detail.session?.taken, 3);
+    await assert.rejects(receiptHistoryDetail("999.99.98"), { code: "RECEIPT_NOT_FOUND" });
+  });
+
+  await t.test("validasi: total kode masuk hanya untuk IN, kode harus 111.22.33 / ATK.111.22.33", () => {
+    const base = { qr_token: a.qr_token, quantity: 1 };
+    assert.equal(recordSchema.safeParse({ ...base, mode: "IN", in_code: "216.09.26", receipt_total: 2 }).success, true);
+    assert.equal(recordSchema.safeParse({ ...base, mode: "IN", in_code: "atk.011.11.25", receipt_total: 2 }).success, true);
+    assert.equal(recordSchema.safeParse({ ...base, mode: "IN", in_code: "21609.26", receipt_total: 2 }).success, false);
+    assert.equal(
+      recordSchema.safeParse({ ...base, mode: "OUT", reservation_number: "1234567", receipt_total: 2 }).success,
+      false,
+    );
   });
 });

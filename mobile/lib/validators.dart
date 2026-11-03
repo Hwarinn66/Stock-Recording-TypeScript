@@ -86,14 +86,14 @@ String? validateInCode(String? input) {
 /// Kode lengkap yang dikirim ke server: barang ATK diawali "ATK.".
 String fullInCode(String input, {required bool atk}) => atk ? 'ATK.$input' : input;
 
-/// Total item sesi reservasi = jumlah jenis barang yang diambil (1–999).
+/// Total item sesi scan (reservasi / kode masuk) = jumlah jenis barang (1–999).
 const int maxReservationItems = 999;
-String? validateReservationTotal(String? input, {int min = 1}) {
+String? validateReservationTotal(String? input, {int min = 1, String verb = 'diambil'}) {
   final value = int.tryParse(input ?? '');
   if (value == null) return 'Isi total item (jumlah jenis barang).';
   if (value < min) {
     return min > 1
-        ? 'Total item tidak boleh kurang dari barang yang sudah diambil ($min).'
+        ? 'Total item tidak boleh kurang dari barang yang sudah $verb ($min).'
         : 'Total item minimal 1.';
   }
   if (value > maxReservationItems) return 'Total item maksimal $maxReservationItems.';

@@ -25,6 +25,18 @@ export const reservationTotalSchema = z
   .int("Total item harus bilangan bulat.")
   .min(1, "Total item minimal 1.")
   .max(999, "Total item maksimal 999.");
+/** Kode masuk lengkap: 111.22.33 atau ATK.111.22.33 (barang ATK). */
+export const inCodeSchema = z
+  .string()
+  .trim()
+  .toUpperCase()
+  .regex(
+    /^(ATK\.)?\d{3}\.\d{2}\.\d{2}$/,
+    "Kode masuk harus seperti 111.22.33 atau ATK.111.22.33.",
+  );
+export const receiptCreateSchema = z
+  .object({ in_code: inCodeSchema, total_items: reservationTotalSchema })
+  .strict();
 export const reservationCreateSchema = z
   .object({
     reservation_number: reservationSchema,
@@ -34,7 +46,7 @@ export const reservationCreateSchema = z
 export const reservationPatchSchema = z
   .object({ total_items: reservationTotalSchema })
   .strict();
-/** Riwayat reservasi di dashboard. */
+/** Riwayat reservasi / penerimaan di dashboard. */
 export const reservationHistorySchema = z.object({
   q: z.string().trim().max(60).default(""),
   status: z.enum(["OPEN", "DONE"]).optional(),
@@ -64,6 +76,8 @@ export const recordSchema = z
     // Sesi reservasi HP 1.3.0: total item sesi; ada = transaksi ini bagian dari sesi
     // (dibuat otomatis bila sesi dimulai saat HP offline). Hanya untuk barang keluar.
     reservation_total: reservationTotalSchema.optional(),
+    // Sesi kode masuk HP 1.4.0: total item sesi; ada = barang masuk ini bagian dari sesi.
+    receipt_total: reservationTotalSchema.optional(),
     // UUID dari HP per pengiriman; kiriman ulang dengan kunci sama tidak dicatat dua kali.
     client_ref: z.string().uuid().optional(),
     // Antrean offline HP: waktu barang benar-benar masuk/keluar (bukan waktu terkirim).
@@ -90,6 +104,22 @@ export const recordSchema = z
         code: "custom",
         path: ["reservation_number"],
         message: "No reservasi wajib untuk barang keluar.",
+      });
+    if (value.mode === "OUT" && value.receipt_total !== undefined)
+      ctx.addIssue({
+        code: "custom",
+        path: ["receipt_total"],
+        message: "Total item kode masuk hanya untuk barang masuk.",
+      });
+    if (
+      value.receipt_total !== undefined &&
+      value.in_code &&
+      !inCodeSchema.safeParse(value.in_code).success
+    )
+      ctx.addIssue({
+        code: "custom",
+        path: ["in_code"],
+        message: "Kode masuk harus seperti 111.22.33 atau ATK.111.22.33.",
       });
     if (value.mode === "IN" && value.reservation_total !== undefined)
       ctx.addIssue({

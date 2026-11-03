@@ -31,6 +31,7 @@ class QueuedTransaction {
     this.reservationNumber,
     this.reservationTotal,
     this.inCode,
+    this.receiptTotal,
     this.attempts = 0,
     this.lastError,
   });
@@ -43,6 +44,7 @@ class QueuedTransaction {
     reservationNumber: json['reservation_number'] as String?,
     reservationTotal: json['reservation_total'] as int?,
     inCode: json['in_code'] as String?,
+    receiptTotal: json['receipt_total'] as int?,
     product: Product.fromJson(json['product'] as Map<String, dynamic>),
     recordedAt: DateTime.parse(json['recorded_at'] as String),
     attempts: json['attempts'] as int? ?? 0,
@@ -57,6 +59,8 @@ class QueuedTransaction {
   /// Total item sesi reservasi (null = transaksi di luar sesi, mis. dari versi lama).
   final int? reservationTotal;
   final String? inCode;
+  /// Total item sesi kode masuk (null = transaksi di luar sesi).
+  final int? receiptTotal;
   final Product product;
   /// Waktu barang benar-benar masuk/keluar (dikirim ke server sebagai recorded_at).
   final DateTime recordedAt;
@@ -74,6 +78,7 @@ class QueuedTransaction {
     'reservation_number': reservationNumber,
     'reservation_total': reservationTotal,
     'in_code': inCode,
+    'receipt_total': receiptTotal,
     'product': product.toJson(),
     'recorded_at': recordedAt.toUtc().toIso8601String(),
     'attempts': attempts,
@@ -192,16 +197,20 @@ class OfflineStore extends ChangeNotifier {
     return raw == null ? {} : jsonDecode(raw) as Map<String, dynamic>;
   }
 
-  /// Data sesi reservasi terakhir dari server, untuk melanjutkan saat server tidak terjangkau.
-  Reservation? cachedReservation(String number) {
-    final json = _reservations[number];
-    return json == null ? null : Reservation.fromJson(json as Map<String, dynamic>);
+  /// Kunci data sesi di HP: no reservasi apa adanya (sama dengan versi 1.3.0), kode masuk "IN:…".
+  static String _sessionKey(Mode mode, String code) => mode == Mode.outbound ? code : 'IN:$code';
+
+  /// Data sesi terakhir dari server, untuk melanjutkan saat server tidak terjangkau.
+  SessionInfo? cachedSession(Mode mode, String code) {
+    final json = _reservations[_sessionKey(mode, code)];
+    return json == null ? null : SessionInfo.fromJson(json as Map<String, dynamic>);
   }
 
-  /// Simpan sesi terbaru (maks. 30 reservasi terakhir).
-  Future<void> rememberReservation(Reservation reservation) async {
-    final all = _reservations..remove(reservation.number);
-    all[reservation.number] = reservation.toJson();
+  /// Simpan sesi terbaru (maks. 30 sesi terakhir).
+  Future<void> rememberSession(Mode mode, SessionInfo info) async {
+    final key = _sessionKey(mode, info.code);
+    final all = _reservations..remove(key);
+    all[key] = info.toJson();
     while (all.length > _maxReservations) {
       all.remove(all.keys.first);
     }

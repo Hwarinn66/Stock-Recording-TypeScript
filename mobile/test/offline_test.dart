@@ -8,7 +8,7 @@ import 'package:http/testing.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:warehouse_scanner/api.dart';
 import 'package:warehouse_scanner/offline.dart';
-import 'package:warehouse_scanner/reservation.dart';
+import 'package:warehouse_scanner/scan_session.dart';
 import 'package:warehouse_scanner/screens/home_screen.dart';
 import 'package:warehouse_scanner/screens/quantity_screen.dart';
 import 'package:warehouse_scanner/screens/scan_screen.dart';
@@ -161,10 +161,7 @@ void main() {
   test('sesi berakhir: antrean tetap, berhenti minta login', () async {
     final store = await freshStore();
     await store.offline.enqueue(queued('a', Mode.inbound, 2));
-    final api = ApiClient(
-      store,
-      MockClient((_) async => failure('UNAUTHORIZED', 'Silakan login dahulu.', 401)),
-    );
+    final api = ApiClient(store, MockClient((_) async => failure('UNAUTHORIZED', 'Silakan login dahulu.', 401)));
     final result = await api.flushQueue();
     expect(result.stopped, 'login');
     expect(store.offline.pending, hasLength(1));
@@ -198,7 +195,7 @@ void main() {
     ApiClient api,
     Mode mode, {
     bool offline = false,
-    ReservationSession? session,
+    ScanSession? session,
   }) async {
     final navigator = GlobalKey<NavigatorState>();
     await tester.pumpWidget(
@@ -213,14 +210,8 @@ void main() {
     );
     navigator.currentState!.push(
       MaterialPageRoute<void>(
-        builder: (_) => QuantityScreen(
-          api: api,
-          mode: mode,
-          token: token,
-          product: product,
-          offline: offline,
-          session: session,
-        ),
+        builder: (_) =>
+            QuantityScreen(api: api, mode: mode, token: token, product: product, offline: offline, session: session),
       ),
     );
     await tester.pumpAndSettle();
@@ -229,10 +220,13 @@ void main() {
   testWidgets('offline: IN disimpan di HP tanpa menghubungi server', (tester) async {
     final store = await freshStore();
     var calls = 0;
-    final api = ApiClient(store, MockClient((_) async {
-      calls++;
-      throw http.ClientException('offline');
-    }));
+    final api = ApiClient(
+      store,
+      MockClient((_) async {
+        calls++;
+        throw http.ClientException('offline');
+      }),
+    );
     await openQuantity(tester, api, Mode.inbound, offline: true);
     expect(find.textContaining('Server tidak terjangkau'), findsOneWidget);
     expect(find.text('Perkiraan stok: 10 PCS'), findsOneWidget);
@@ -255,9 +249,10 @@ void main() {
   testWidgets('offline: OUT melebihi perkiraan stok diberi peringatan, tetap bisa disimpan', (tester) async {
     final store = await freshStore();
     final api = ApiClient(store, MockClient((_) async => throw http.ClientException('offline')));
-    final session = ReservationSession(
+    final session = ScanSession(
       api,
-      Reservation(number: '0012345', total: 2, taken: 0, items: []),
+      SessionInfo(code: '0012345', total: 2, taken: 0, items: []),
+      mode: Mode.outbound,
       offline: true,
     );
     await openQuantity(tester, api, Mode.outbound, offline: true, session: session);

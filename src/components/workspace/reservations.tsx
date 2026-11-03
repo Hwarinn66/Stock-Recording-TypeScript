@@ -5,17 +5,44 @@ import { ChevronDown, ChevronRight } from "lucide-react";
 import { timestamp } from "@/lib/client";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
-import type {
-  Reservation,
-  ReservationHistoryRow,
-  ReservationItem,
-} from "@/types";
+import type { Batch, BatchHistoryRow, BatchItem } from "@/types";
 import { State, Pager, pill, useData } from "./shared";
 
 const LIMIT = 10;
 
-/** Progres & status sesi reservasi HP; reservasi lama (tanpa sesi) hanya punya jumlah barang. */
-function Status({ r }: { r: ReservationHistoryRow }) {
+/** Riwayat sesi scan HP di dashboard: barang keluar per no reservasi, barang masuk per kode masuk. */
+type Kind = {
+  api: "reservation-history" | "receipt-history";
+  title: string;
+  /** "reservasi" / "kode masuk" dalam teks. */
+  noun: string;
+  codeHeader: string;
+  /** Barang "diambil" / "masuk". */
+  verb: string;
+  /** Daftar per barang di halaman Riwayat. */
+  href: string;
+};
+
+const RESERVATIONS: Kind = {
+  api: "reservation-history",
+  title: "Riwayat reservasi",
+  noun: "reservasi",
+  codeHeader: "No Reservasi",
+  verb: "diambil",
+  href: "/reservations",
+};
+
+const RECEIPTS: Kind = {
+  api: "receipt-history",
+  title: "Riwayat penerimaan (barang masuk)",
+  noun: "kode masuk",
+  codeHeader: "Kode Masuk",
+  verb: "masuk",
+  href: "/history/in",
+};
+
+/** Progres & status sesi HP; data lama (tanpa sesi) hanya punya jumlah barang. */
+function Status({ r }: { r: BatchHistoryRow }) {
   if (!r.status || r.total_items === null || r.taken === null)
     return <span className="text-slate-400">—</span>;
   const done = r.status === "DONE";
@@ -42,11 +69,21 @@ function Status({ r }: { r: ReservationHistoryRow }) {
   );
 }
 
+/** Dashboard: riwayat reservasi (barang keluar). Klik baris untuk melihat barang yang diambil. */
+export const ReservationHistory = ({ version }: { version: number }) => (
+  <BatchHistory kind={RESERVATIONS} version={version} />
+);
+
+/** Dashboard: riwayat penerimaan (barang masuk) per kode masuk. Klik baris untuk melihat barangnya. */
+export const ReceiptHistory = ({ version }: { version: number }) => (
+  <BatchHistory kind={RECEIPTS} version={version} />
+);
+
 /**
- * Dashboard: riwayat reservasi, satu baris per no reservasi (terbaru di atas). Klik baris
- * untuk melihat barang apa saja yang diambil. Daftar per barang tetap di Riwayat → No reservasi.
+ * Satu baris per kode (terbaru di atas). Klik baris untuk melihat barangnya. Daftar per
+ * barang tetap di halaman Riwayat.
  */
-export function ReservationHistory({ version }: { version: number }) {
+function BatchHistory({ kind, version }: { kind: Kind; version: number }) {
   const [q, setQ] = useState("");
   const [status, setStatus] = useState("");
   const [page, setPage] = useState(1);
@@ -59,8 +96,8 @@ export function ReservationHistory({ version }: { version: number }) {
     limit: String(LIMIT),
     ...(status ? { status } : {}),
   });
-  const list = useData<{ items: ReservationHistoryRow[]; total: number }>(
-    "reservation-history?" + params,
+  const list = useData<{ items: BatchHistoryRow[]; total: number }>(
+    `${kind.api}?${params}`,
     version,
   );
   const reset = (fn: () => void) => {
@@ -71,21 +108,21 @@ export function ReservationHistory({ version }: { version: number }) {
   return (
     <section className="mb-8">
       <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
-        <h2 className="text-lg font-bold">Riwayat reservasi</h2>
-        <Link href="/reservations" className="text-xs text-emerald-700">
+        <h2 className="text-lg font-bold">{kind.title}</h2>
+        <Link href={kind.href} className="text-xs text-emerald-700">
           Lihat per barang di Riwayat →
         </Link>
       </div>
       <div className="mb-3 flex flex-wrap gap-2">
         <Input
           className="max-w-xs"
-          aria-label="Cari reservasi"
-          placeholder="Cari no reservasi, kode/nama barang…"
+          aria-label={`Cari ${kind.noun}`}
+          placeholder={`Cari ${kind.noun}, kode/nama barang…`}
           value={q}
           onChange={(e) => reset(() => setQ(e.target.value))}
         />
         <select
-          aria-label="Filter status reservasi"
+          aria-label={`Filter status ${kind.noun}`}
           value={status}
           onChange={(e) => reset(() => setStatus(e.target.value))}
         >
@@ -106,8 +143,8 @@ export function ReservationHistory({ version }: { version: number }) {
               <tr>
                 {[
                   "",
-                  "No Reservasi",
-                  "Barang Diambil",
+                  kind.codeHeader,
+                  `Barang ${kind.verb === "diambil" ? "Diambil" : "Masuk"}`,
                   "Progres / Status",
                   "Scan Terakhir",
                   "Petugas",
@@ -118,11 +155,10 @@ export function ReservationHistory({ version }: { version: number }) {
             </thead>
             <tbody>
               {list.data.items.map((r) => {
-                const expanded = open === r.reservation_number;
-                const toggle = () =>
-                  setOpen(expanded ? undefined : r.reservation_number);
+                const expanded = open === r.code;
+                const toggle = () => setOpen(expanded ? undefined : r.code);
                 return (
-                  <Fragment key={r.reservation_number}>
+                  <Fragment key={r.code}>
                     <tr
                       className="cursor-pointer hover:bg-slate-50"
                       onClick={toggle}
@@ -131,7 +167,7 @@ export function ReservationHistory({ version }: { version: number }) {
                         <button
                           type="button"
                           aria-expanded={expanded}
-                          aria-label={`Lihat barang reservasi ${r.reservation_number}`}
+                          aria-label={`Lihat barang ${kind.noun} ${r.code}`}
                           className="grid place-items-center"
                           onClick={(e) => {
                             e.stopPropagation();
@@ -145,9 +181,7 @@ export function ReservationHistory({ version }: { version: number }) {
                           )}
                         </button>
                       </td>
-                      <td className="font-mono text-sm font-bold">
-                        {r.reservation_number}
-                      </td>
+                      <td className="font-mono text-sm font-bold">{r.code}</td>
                       <td className="font-bold">{r.item_count} barang</td>
                       <td>
                         <Status r={r} />
@@ -158,8 +192,9 @@ export function ReservationHistory({ version }: { version: number }) {
                     {expanded && (
                       <tr>
                         <td colSpan={6} className="bg-slate-50/60 p-4">
-                          <ReservationItems
-                            number={r.reservation_number}
+                          <BatchItems
+                            kind={kind}
+                            code={r.code}
                             version={version}
                             timezone={timezone}
                           />
@@ -188,20 +223,22 @@ export function ReservationHistory({ version }: { version: number }) {
   );
 }
 
-/** Barang yang diambil untuk satu no reservasi, urut waktu scan. */
-function ReservationItems({
-  number,
+/** Barang yang tercatat dengan satu kode, urut waktu scan. */
+function BatchItems({
+  kind,
+  code,
   version,
   timezone,
 }: {
-  number: string;
+  kind: Kind;
+  code: string;
   version: number;
   timezone?: string;
 }) {
-  const detail = useData<{
-    session: Reservation | null;
-    items: ReservationItem[];
-  }>("reservation-history/" + number, version);
+  const detail = useData<{ session: Batch | null; items: BatchItem[] }>(
+    `${kind.api}/${encodeURIComponent(code)}`,
+    version,
+  );
   if (!detail.data)
     return <State error={detail.error} loading={detail.loading} />;
   const { session, items } = detail.data;
@@ -210,11 +247,11 @@ function ReservationItems({
     <>
       <p className="mb-2 font-semibold">
         {session
-          ? `${session.taken} dari ${session.total_items} barang sudah diambil` +
+          ? `${session.taken} dari ${session.total_items} barang sudah ${kind.verb}` +
             (session.taken < session.total_items
               ? ` · kurang ${session.total_items - session.taken} barang`
               : " · selesai")
-          : `${items.length} barang diambil`}
+          : `${items.length} barang ${kind.verb}`}
         {session && (
           <span className="ml-2 font-normal text-slate-500">
             Dimulai {timestamp(session.created_at, timezone)}
@@ -226,7 +263,7 @@ function ReservationItems({
         )}
       </p>
       {!items.length ? (
-        <p className="text-slate-500">Belum ada barang yang diambil.</p>
+        <p className="text-slate-500">Belum ada barang yang {kind.verb}.</p>
       ) : (
         <table className="w-full text-xs">
           <thead>
@@ -272,7 +309,7 @@ function ReservationItems({
       )}
       {session && outside > 0 && (
         <p className="mt-2 text-[11px] text-slate-400">
-          Barang &quot;di luar sesi HP&quot; dicatat dengan no reservasi ini dari
+          Barang &quot;di luar sesi HP&quot; dicatat dengan {kind.noun} ini dari
           aplikasi lama atau buku darurat, tidak dihitung di progres.
         </p>
       )}

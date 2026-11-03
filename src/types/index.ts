@@ -44,6 +44,8 @@ export interface StockTransaction {
   /** Sesi reservasi HP tempat barang ini diambil (NULL = transaksi lama / buku darurat). */
   reservation_id?: number | null;
   in_code?: string | null;
+  /** Sesi kode masuk HP tempat barang ini diterima (NULL = transaksi lama / buku darurat). */
+  receipt_id?: number | null;
   client_ref?: string | null;
   actor_name: string | null;
   name: string;
@@ -51,13 +53,18 @@ export interface StockTransaction {
   unit: string;
   stock: number;
 }
-/** Sesi pengambilan barang per no reservasi (aplikasi HP). */
-export interface Reservation {
+/**
+ * Sesi scan HP: pengambilan barang keluar per no reservasi, atau penerimaan barang masuk
+ * per kode masuk. `code` = no reservasi / kode masuk.
+ */
+export interface Batch {
   id: number;
-  reservation_number: string;
-  /** Jumlah jenis barang yang harus diambil. */
+  code: string;
+  reservation_number?: string;
+  in_code?: string;
+  /** Jumlah jenis barang yang harus diambil / masuk. */
   total_items: number;
-  /** Jumlah jenis barang yang sudah diambil. */
+  /** Jumlah jenis barang yang sudah diambil / masuk. */
   taken: number;
   status: "OPEN" | "DONE";
   created_by_name: string | null;
@@ -65,10 +72,12 @@ export interface Reservation {
   completed_at: string | null;
   last_activity: string | null;
 }
-/** Satu baris riwayat reservasi di dashboard (field sesi null = reservasi lama tanpa sesi). */
-export interface ReservationHistoryRow {
-  reservation_number: string;
-  /** Jumlah jenis barang yang sudah diambil dengan no reservasi ini. */
+/** Satu baris riwayat reservasi / penerimaan di dashboard (field sesi null = data lama tanpa sesi). */
+export interface BatchHistoryRow {
+  code: string;
+  reservation_number?: string;
+  in_code?: string;
+  /** Jumlah jenis barang yang sudah diambil / masuk dengan kode ini. */
   item_count: number;
   last_scan: string | null;
   actors: string | null;
@@ -78,7 +87,7 @@ export interface ReservationHistoryRow {
   created_at: string | null;
   completed_at: string | null;
 }
-export interface ReservationItem {
+export interface BatchItem {
   id: number;
   transaction_number: string;
   product_id: number;
@@ -89,7 +98,7 @@ export interface ReservationItem {
   location_code: string;
   scanned_at: string;
   actor_name: string | null;
-  /** Detail dashboard: false = barang keluar lama / dari luar sesi reservasi HP. */
+  /** false = transaksi lama / dari luar sesi HP (aplikasi lama, buku darurat). */
   in_session?: boolean;
 }
 export interface Lookup {

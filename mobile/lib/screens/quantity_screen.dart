@@ -3,7 +3,7 @@ import 'package:flutter/services.dart';
 
 import '../api.dart';
 import '../offline.dart';
-import '../reservation.dart';
+import '../scan_session.dart';
 import '../ui.dart';
 import '../validators.dart';
 import 'in_code_screen.dart';
@@ -23,7 +23,8 @@ class DecimalInputFormatter extends TextInputFormatter {
   ) => _pattern.hasMatch(newValue.text) ? newValue : oldValue;
 }
 
-/// Langkah 3: isi jumlah barang. IN lanjut ke kode masuk; OUT (sesi reservasi) langsung selesai.
+/// Langkah 3: isi jumlah barang. Dalam sesi scan (no reservasi / kode masuk sudah diisi di
+/// awal) langsung selesai; IN tanpa sesi lanjut ke layar kode masuk.
 class QuantityScreen extends StatefulWidget {
   const QuantityScreen({
     super.key,
@@ -41,8 +42,8 @@ class QuantityScreen extends StatefulWidget {
   final Product product;
   /// Barang dikenali dari data di HP karena server tidak terjangkau.
   final bool offline;
-  /// Sesi reservasi barang keluar: no reservasi & total item sudah diisi di awal.
-  final ReservationSession? session;
+  /// Sesi scan: no reservasi / kode masuk & total item sudah diisi di awal.
+  final ScanSession? session;
 
   @override
   State<QuantityScreen> createState() => _QuantityScreenState();
@@ -80,8 +81,8 @@ class _QuantityScreenState extends State<QuantityScreen> {
       _quantity.text,
       decimal: allowsDecimal(widget.product.unit),
     )!;
-    if (widget.mode.needsInCode) {
-      // IN → kode masuk.
+    if (widget.mode.needsInCode && widget.session == null) {
+      // IN tanpa sesi → kode masuk per barang.
       await Navigator.of(context).push(
         MaterialPageRoute<void>(
           builder: (_) => InCodeScreen(
@@ -143,8 +144,8 @@ class _QuantityScreenState extends State<QuantityScreen> {
                       footer: widget.session == null
                           ? null
                           : Text(
-                              'Reservasi ${widget.session!.number} · barang ke-'
-                              '${widget.session!.taken + 1} dari ${widget.session!.total}',
+                              '${widget.session!.mode.sessionLabel} ${widget.session!.code} · '
+                              'barang ke-${widget.session!.taken + 1} dari ${widget.session!.total}',
                               key: const Key('reservation-info'),
                               style: const TextStyle(fontWeight: FontWeight.bold),
                             ),
@@ -223,7 +224,7 @@ class _QuantityScreenState extends State<QuantityScreen> {
                           dimension: 22,
                           child: CircularProgressIndicator(strokeWidth: 2.5, color: Colors.white),
                         )
-                      : Text(widget.mode.needsInCode ? 'LANJUT' : 'SELESAI'),
+                      : Text(widget.mode.needsInCode && widget.session == null ? 'LANJUT' : 'SELESAI'),
                 ),
               ),
             ],

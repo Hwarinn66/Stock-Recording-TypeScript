@@ -5,11 +5,11 @@ import 'package:flutter/services.dart';
 
 import '../api.dart';
 import '../offline.dart';
-import '../reservation.dart';
+import '../scan_session.dart';
 import '../ui.dart';
 import '../validators.dart';
 import 'home_screen.dart';
-import 'reservation_screen.dart';
+import 'session_screen.dart';
 import 'scan_screen.dart';
 
 /// Kirim transaksi; stok langsung berubah di server. Berhasil → layar hasil
@@ -28,11 +28,18 @@ Future<void> submitTransaction(
   String? reservationNumber,
   String? inCode,
   bool offline = false,
-  ReservationSession? session,
+  ScanSession? session,
 }) async {
-  // Barang keluar dalam sesi reservasi: no reservasi & total item dari sesi.
-  reservationNumber ??= session?.number;
-  final reservationTotal = session?.total;
+  // Dalam sesi scan: no reservasi / kode masuk & total item dari sesi.
+  int? reservationTotal;
+  int? receiptTotal;
+  if (session != null && session.mode == Mode.outbound) {
+    reservationNumber ??= session.code;
+    reservationTotal = session.total;
+  } else if (session != null) {
+    inCode ??= session.code;
+    receiptTotal = session.total;
+  }
   final recordedAt = DateTime.now();
   void replaceWith(Widget screen) => unawaited(
     Navigator.of(context).pushAndRemoveUntil(
@@ -49,6 +56,7 @@ Future<void> submitTransaction(
         reservationNumber: reservationNumber,
         reservationTotal: reservationTotal,
         inCode: inCode,
+        receiptTotal: receiptTotal,
         clientRef: clientRef,
       );
       session?.applyResult(result);
@@ -67,7 +75,7 @@ Future<void> submitTransaction(
       if (!error.unavailable) {
         unawaited(HapticFeedback.heavyImpact());
         showError(context, error.message);
-        // Mis. barang sudah diambil dari HP lain / reservasi sudah selesai: perbarui progres.
+        // Mis. barang sudah tercatat dari HP lain / sesi sudah selesai: perbarui progres.
         if (session != null) unawaited(session.refresh().catchError((_) {}));
         return;
       }
@@ -81,6 +89,7 @@ Future<void> submitTransaction(
     reservationNumber: reservationNumber,
     reservationTotal: reservationTotal,
     inCode: inCode,
+    receiptTotal: receiptTotal,
     product: product,
     recordedAt: recordedAt,
   );
@@ -96,7 +105,7 @@ class QueuedScreen extends StatelessWidget {
 
   final ApiClient api;
   final QueuedTransaction item;
-  final ReservationSession? session;
+  final ScanSession? session;
 
   @override
   Widget build(BuildContext context) {
@@ -140,7 +149,7 @@ class ResultScreen extends StatelessWidget {
   final ApiClient api;
   final Mode mode;
   final TransactionResult result;
-  final ReservationSession? session;
+  final ScanSession? session;
 
   @override
   Widget build(BuildContext context) {
@@ -185,8 +194,8 @@ class _Summary extends StatelessWidget {
 
   final ApiClient api;
   final Mode mode;
-  /// Sesi reservasi: tampilkan progres; tombol berikutnya sesuai sisa barang.
-  final ReservationSession? session;
+  /// Sesi scan: tampilkan progres; tombol berikutnya sesuai sisa barang.
+  final ScanSession? session;
   final IconData icon;
   final Color iconColor;
   final String title;
@@ -268,7 +277,7 @@ class _Summary extends StatelessWidget {
                   return FilledButton.icon(
                     key: const Key('next'),
                     onPressed: () => s.done
-                        ? Navigator.of(context).popUntil(ModalRoute.withName(ReservationScreen.routeName))
+                        ? Navigator.of(context).popUntil(ModalRoute.withName(SessionScreen.routeName))
                         : Navigator.of(context).pop(),
                     style: FilledButton.styleFrom(
                       backgroundColor: s.done ? brandGreen : color,
@@ -298,11 +307,11 @@ class _Summary extends StatelessWidget {
   }
 }
 
-/// Progres reservasi di layar hasil: "3 dari 5 barang", selesai atau belum.
+/// Progres sesi di layar hasil: "3 dari 5 barang", selesai atau belum.
 class _ReservationProgress extends StatelessWidget {
   const _ReservationProgress({required this.session});
 
-  final ReservationSession session;
+  final ScanSession session;
 
   @override
   Widget build(BuildContext context) {
@@ -321,8 +330,8 @@ class _ReservationProgress extends StatelessWidget {
           Expanded(
             child: Text(
               done
-                  ? 'Reservasi ${session.number} SELESAI: ${session.taken} dari ${session.total} barang.'
-                  : 'Reservasi ${session.number}: ${session.taken} dari ${session.total} barang. '
+                  ? '${session.mode.sessionLabel} ${session.code} SELESAI: ${session.taken} dari ${session.total} barang.'
+                  : '${session.mode.sessionLabel} ${session.code}: ${session.taken} dari ${session.total} barang. '
                         'Belum selesai, kurang ${session.total - session.taken} barang.',
               key: const Key('reservation-progress'),
               style: TextStyle(fontWeight: FontWeight.bold, color: color),

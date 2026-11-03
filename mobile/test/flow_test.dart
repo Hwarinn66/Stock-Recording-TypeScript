@@ -7,9 +7,9 @@ import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:warehouse_scanner/api.dart';
-import 'package:warehouse_scanner/reservation.dart';
+import 'package:warehouse_scanner/scan_session.dart';
 import 'package:warehouse_scanner/screens/quantity_screen.dart';
-import 'package:warehouse_scanner/screens/reservation_screen.dart';
+import 'package:warehouse_scanner/screens/session_screen.dart';
 import 'package:warehouse_scanner/screens/scan_screen.dart';
 import 'package:warehouse_scanner/session_store.dart';
 
@@ -73,13 +73,20 @@ Future<(ApiClient, List<Map<String, dynamic>>)> fakeApi({
             'reservation_number': body['reservation_number'],
             'in_code': body['in_code'],
             'product': productJson(subject),
-            // Sesi reservasi: progres setelah barang ini (server palsu: barang ke-1).
+            // Sesi scan: progres setelah barang ini (server palsu: barang ke-1).
             if (body['reservation_total'] != null)
               'reservation': {
                 'reservation_number': body['reservation_number'],
                 'total_items': body['reservation_total'],
                 'taken': 1,
                 'status': body['reservation_total'] == 1 ? 'DONE' : 'OPEN',
+              },
+            if (body['receipt_total'] != null)
+              'receipt': {
+                'in_code': body['in_code'],
+                'total_items': body['receipt_total'],
+                'taken': 1,
+                'status': body['receipt_total'] == 1 ? 'DONE' : 'OPEN',
               },
           },
         }),
@@ -91,51 +98,38 @@ Future<(ApiClient, List<Map<String, dynamic>>)> fakeApi({
 }
 
 /// Sesi reservasi baru 0012345 dengan [total] item.
-ReservationSession newSession(ApiClient api, {int total = 3}) =>
-    ReservationSession(api, Reservation(number: '0012345', total: total, taken: 0, items: []));
+ScanSession newSession(ApiClient api, {int total = 3}) => ScanSession(
+  api,
+  SessionInfo(code: '0012345', total: total, taken: 0, items: []),
+  mode: Mode.outbound,
+);
 
 /// Tumpukan seperti di aplikasi: menu → (sesi reservasi) → scan → layar jumlah.
-Future<void> openQuantity(
-  WidgetTester tester,
-  ApiClient api,
-  Mode mode, {
-  Product? item,
-  ReservationSession? session,
-}) async {
+Future<void> openQuantity(WidgetTester tester, ApiClient api, Mode mode, {Product? item, ScanSession? session}) async {
   final navigator = GlobalKey<NavigatorState>();
   await tester.pumpWidget(
     MaterialApp(
       navigatorKey: navigator,
       routes: {
         '/': (_) => const Scaffold(body: Text('menu')),
-        ReservationScreen.routeName: (_) => const Scaffold(body: Text('ringkasan reservasi')),
+        SessionScreen.routeName: (_) => const Scaffold(body: Text('ringkasan reservasi')),
         ScanScreen.routeName: (_) => const Scaffold(body: Text('kamera scan')),
       },
     ),
   );
-  if (session != null) navigator.currentState!.pushNamed(ReservationScreen.routeName);
+  if (session != null) navigator.currentState!.pushNamed(SessionScreen.routeName);
   navigator.currentState!.pushNamed(ScanScreen.routeName);
   navigator.currentState!.push(
     MaterialPageRoute<void>(
-      builder: (_) => QuantityScreen(
-        api: api,
-        mode: mode,
-        token: token,
-        product: item ?? product,
-        session: session,
-      ),
+      builder: (_) => QuantityScreen(api: api, mode: mode, token: token, product: item ?? product, session: session),
     ),
   );
   await tester.pumpAndSettle();
 }
 
-Finder field(String key) => find.descendant(
-  of: find.byKey(Key(key)),
-  matching: find.byType(EditableText),
-);
+Finder field(String key) => find.descendant(of: find.byKey(Key(key)), matching: find.byType(EditableText));
 
-String text(WidgetTester tester, String key) =>
-    tester.widget<EditableText>(field(key)).controller.text;
+String text(WidgetTester tester, String key) => tester.widget<EditableText>(field(key)).controller.text;
 
 /// Gulir daftar utama layar sampai [finder] terlihat penuh (layar uji hanya 800×600).
 Future<void> reveal(WidgetTester tester, Finder finder) async {
@@ -179,10 +173,7 @@ void main() {
     expect(find.text('Transaksi berhasil'), findsOneWidget);
     expect(find.text('0012345'), findsOneWidget);
     expect(find.text('99 → 94 PCS'), findsOneWidget);
-    expect(
-      find.text('Reservasi 0012345: 1 dari 3 barang. Belum selesai, kurang 2 barang.'),
-      findsOneWidget,
-    );
+    expect(find.text('Reservasi 0012345: 1 dari 3 barang. Belum selesai, kurang 2 barang.'), findsOneWidget);
     expect(session.has(product.id), isTrue);
 
     // Belum selesai: kembali ke kamera untuk barang berikutnya.
@@ -209,7 +200,39 @@ void main() {
     session.dispose();
   });
 
-  testWidgets('IN: jumlah lalu kode masuk 111.22.33 (titik otomatis), tanpa no reservasi', (tester) async {
+  testWidgets('IN dalam sesi kode masuk: jumlah lalu langsung selesai, kode masuk dari sesi', (tester) async {
+    final (api, sent) = await fakeApi();
+    final session = ScanSession(
+      api,
+      SessionInfo(code: '216.09.26', total: 2, taken: 0, items: []),
+      mode: Mode.inbound,
+    );
+    await openQuantity(tester, api, Mode.inbound, session: session);
+    expect(find.text('Kode masuk 216.09.26 · barang ke-1 dari 2'), findsOneWidget);
+    await tester.enterText(find.byKey(const Key('quantity')), '3');
+    await tester.tap(find.text('SELESAI'));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('in-code')), findsNothing, reason: 'kode masuk tidak diketik lagi');
+    expect(sent.single, {
+      'qr_token': token,
+      'mode': 'IN',
+      'quantity': 3,
+      'in_code': '216.09.26',
+      'receipt_total': 2,
+      'client_ref': matches(RegExp(r'^[0-9a-f-]{36}$')),
+    });
+    expect(find.text('+3 PCS'), findsOneWidget);
+    expect(find.text('99 → 102 PCS'), findsOneWidget);
+    expect(find.text('Kode masuk 216.09.26: 1 dari 2 barang. Belum selesai, kurang 1 barang.'), findsOneWidget);
+    expect(session.has(product.id), isTrue);
+    await reveal(tester, find.text('SCAN BERIKUTNYA (2/2)'));
+    await tester.tap(find.text('SCAN BERIKUTNYA (2/2)'));
+    await tester.pumpAndSettle();
+    expect(find.text('kamera scan'), findsOneWidget);
+    session.dispose();
+  });
+
+  testWidgets('IN tanpa sesi: jumlah lalu kode masuk 111.22.33 (titik otomatis), tanpa no reservasi', (tester) async {
     final (api, sent) = await fakeApi();
     await openQuantity(tester, api, Mode.inbound);
     await tester.enterText(find.byKey(const Key('quantity')), '0');

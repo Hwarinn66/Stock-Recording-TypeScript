@@ -18,6 +18,14 @@ enum Mode {
   bool get needsReservation => this == Mode.outbound;
   /// Barang masuk wajib Kode Masuk (111.22.33; barang ATK: ATK.111.22.33).
   bool get needsInCode => this == Mode.inbound;
+
+  /// Sesi scan: barang keluar per no reservasi, barang masuk per kode masuk.
+  String get sessionLabel => this == Mode.outbound ? 'Reservasi' : 'Kode masuk';
+  String get sessionCodeLabel => this == Mode.outbound ? 'No reservasi' : 'Kode masuk';
+  /// Barang "diambil" (keluar) / "masuk".
+  String get sessionVerb => this == Mode.outbound ? 'diambil' : 'masuk';
+  /// Awalan kode error sesi di server, mis. RESERVATION_NOT_FOUND / RECEIPT_NOT_FOUND.
+  String get sessionError => this == Mode.outbound ? 'RESERVATION' : 'RECEIPT';
 }
 
 class ApiException implements Exception {
@@ -178,9 +186,9 @@ class ProductInfo {
 DateTime parseServerTime(String value) =>
     value.contains('T') ? DateTime.parse(value) : DateTime.parse('${value.replaceFirst(' ', 'T')}Z');
 
-/// Barang yang sudah diambil dalam satu reservasi.
-class ReservationItem {
-  ReservationItem({
+/// Barang yang sudah diambil / masuk dalam satu sesi scan.
+class SessionItem {
+  SessionItem({
     required this.productId,
     required this.sku,
     required this.name,
@@ -191,7 +199,7 @@ class ReservationItem {
     this.pending = false,
   });
 
-  factory ReservationItem.fromJson(Map<String, dynamic> json) => ReservationItem(
+  factory SessionItem.fromJson(Map<String, dynamic> json) => SessionItem(
     productId: json['product_id'] as int,
     sku: json['sku'] as String,
     name: json['name'] as String,
@@ -222,46 +230,50 @@ class ReservationItem {
   };
 }
 
-/// Progres reservasi dalam jawaban transaksi (tanpa daftar barang).
-class ReservationProgress {
-  ReservationProgress({required this.number, required this.total, required this.taken, required this.done});
+/// Kode sesi dari server: no reservasi (barang keluar) atau kode masuk (barang masuk).
+String _sessionCode(Map<String, dynamic> json) =>
+    (json['code'] ?? json['reservation_number'] ?? json['in_code']) as String;
 
-  factory ReservationProgress.fromJson(Map<String, dynamic> json) => ReservationProgress(
-    number: json['reservation_number'] as String,
+/// Progres sesi dalam jawaban transaksi (tanpa daftar barang).
+class SessionProgress {
+  SessionProgress({required this.code, required this.total, required this.taken, required this.done});
+
+  factory SessionProgress.fromJson(Map<String, dynamic> json) => SessionProgress(
+    code: _sessionCode(json),
     total: json['total_items'] as int,
     taken: json['taken'] as int,
     done: json['status'] == 'DONE',
   );
 
-  final String number;
-  /// Jumlah jenis barang yang harus diambil.
+  final String code;
+  /// Jumlah jenis barang yang harus diambil / masuk.
   final int total;
-  /// Jumlah jenis barang yang sudah diambil.
+  /// Jumlah jenis barang yang sudah diambil / masuk.
   final int taken;
   final bool done;
 }
 
-/// Sesi pengambilan per no reservasi: total item, progres, dan barang yang sudah diambil.
-class Reservation {
-  Reservation({required this.number, required this.total, required this.taken, required this.items});
+/// Sesi scan (per no reservasi / kode masuk): total item, progres, dan barangnya.
+class SessionInfo {
+  SessionInfo({required this.code, required this.total, required this.taken, required this.items});
 
-  factory Reservation.fromJson(Map<String, dynamic> json) => Reservation(
-    number: json['reservation_number'] as String,
+  factory SessionInfo.fromJson(Map<String, dynamic> json) => SessionInfo(
+    code: _sessionCode(json),
     total: json['total_items'] as int,
     taken: json['taken'] as int,
     items: (json['items'] as List? ?? [])
-        .map((e) => ReservationItem.fromJson(e as Map<String, dynamic>))
+        .map((e) => SessionItem.fromJson(e as Map<String, dynamic>))
         .toList(),
   );
 
-  final String number;
+  final String code;
   final int total;
   final int taken;
-  final List<ReservationItem> items;
+  final List<SessionItem> items;
   bool get done => taken >= total;
 
   Map<String, Object?> toJson() => {
-    'reservation_number': number,
+    'code': code,
     'total_items': total,
     'taken': taken,
     'status': done ? 'DONE' : 'OPEN',
@@ -278,7 +290,7 @@ class TransactionResult {
     required this.product,
     this.reservationNumber,
     this.inCode,
-    this.reservation,
+    this.session,
     this.replayed = false,
   });
 
@@ -291,9 +303,10 @@ class TransactionResult {
         reservationNumber: json['reservation_number'] as String?,
         inCode: json['in_code'] as String?,
         product: Product.fromJson(json['product'] as Map<String, dynamic>),
-        reservation: json['reservation'] == null
+        // Barang keluar: progres reservasi; barang masuk: progres kode masuk.
+        session: (json['reservation'] ?? json['receipt']) == null
             ? null
-            : ReservationProgress.fromJson(json['reservation'] as Map<String, dynamic>),
+            : SessionProgress.fromJson((json['reservation'] ?? json['receipt']) as Map<String, dynamic>),
         replayed: json['replayed'] as bool? ?? false,
       );
 
@@ -304,8 +317,8 @@ class TransactionResult {
   final String? reservationNumber;
   final String? inCode;
   final Product product;
-  /// Progres sesi reservasi setelah transaksi ini (null = bukan bagian dari sesi).
-  final ReservationProgress? reservation;
+  /// Progres sesi scan setelah transaksi ini (null = bukan bagian dari sesi).
+  final SessionProgress? session;
   /// true = transaksi ini sudah tersimpan sebelumnya (kiriman ulang, tidak dicatat dua kali).
   final bool replayed;
 }
@@ -374,6 +387,7 @@ class ApiClient {
     String? reservationNumber,
     int? reservationTotal,
     String? inCode,
+    int? receiptTotal,
     String? clientRef,
     DateTime? recordedAt,
   }) async {
@@ -385,6 +399,8 @@ class ApiClient {
       // Bagian dari sesi reservasi (server membuat sesinya bila dimulai saat offline).
       'reservation_total': ?reservationTotal,
       'in_code': ?inCode,
+      // Bagian dari sesi kode masuk (server membuat sesinya bila dimulai saat offline).
+      'receipt_total': ?receiptTotal,
       'client_ref': ?clientRef,
       'recorded_at': ?recordedAt?.toUtc().toIso8601String(),
     });
@@ -393,35 +409,41 @@ class ApiClient {
     return result;
   }
 
-  /// Sesi reservasi beserta barang yang sudah diambil; null = belum dimulai.
-  Future<Reservation?> reservation(String number) async {
+  /// Barang keluar → sesi reservasi; barang masuk → sesi kode masuk.
+  static String _sessionPath(Mode mode, [String? code]) {
+    final base = mode == Mode.outbound ? 'reservations' : 'receipts';
+    return code == null ? base : '$base/${Uri.encodeComponent(code)}';
+  }
+
+  /// Sesi beserta barang yang sudah diambil / masuk; null = belum dimulai.
+  Future<SessionInfo?> session(Mode mode, String code) async {
     try {
-      final data = await _send('GET', 'reservations/$number');
-      return _remember(Reservation.fromJson(data as Map<String, dynamic>));
+      final data = await _send('GET', _sessionPath(mode, code));
+      return _remember(mode, SessionInfo.fromJson(data as Map<String, dynamic>));
     } on ApiException catch (error) {
-      if (error.code == 'RESERVATION_NOT_FOUND') return null;
+      if (error.code == '${mode.sessionError}_NOT_FOUND') return null;
       rethrow;
     }
   }
 
-  /// Mulai sesi reservasi. Sudah dimulai (mis. di HP lain) → ApiException RESERVATION_EXISTS.
-  Future<Reservation> createReservation(String number, int total) async {
-    final data = await _send('POST', 'reservations', body: {
-      'reservation_number': number,
+  /// Mulai sesi. Sudah dimulai (mis. di HP lain) → ApiException RESERVATION_EXISTS / RECEIPT_EXISTS.
+  Future<SessionInfo> createSession(Mode mode, String code, int total) async {
+    final data = await _send('POST', _sessionPath(mode), body: {
+      mode == Mode.outbound ? 'reservation_number' : 'in_code': code,
       'total_items': total,
     });
-    return _remember(Reservation.fromJson(data as Map<String, dynamic>));
+    return _remember(mode, SessionInfo.fromJson(data as Map<String, dynamic>));
   }
 
-  /// Ubah total item (tidak boleh kurang dari barang yang sudah diambil).
-  Future<Reservation> setReservationTotal(String number, int total) async {
-    final data = await _send('PATCH', 'reservations/$number', body: {'total_items': total});
-    return _remember(Reservation.fromJson(data as Map<String, dynamic>));
+  /// Ubah total item (tidak boleh kurang dari barang yang sudah diambil / masuk).
+  Future<SessionInfo> setSessionTotal(Mode mode, String code, int total) async {
+    final data = await _send('PATCH', _sessionPath(mode, code), body: {'total_items': total});
+    return _remember(mode, SessionInfo.fromJson(data as Map<String, dynamic>));
   }
 
-  Future<Reservation> _remember(Reservation reservation) async {
-    await store.offline.rememberReservation(reservation);
-    return reservation;
+  Future<SessionInfo> _remember(Mode mode, SessionInfo info) async {
+    await store.offline.rememberSession(mode, info);
+    return info;
   }
 
   /// Halaman Cek Barang: detail barang hasil scan (tidak mengubah apa pun).
@@ -472,6 +494,7 @@ class ApiClient {
             reservationNumber: item.reservationNumber,
             reservationTotal: item.reservationTotal,
             inCode: item.inCode,
+            receiptTotal: item.receiptTotal,
             clientRef: item.clientRef,
             recordedAt: item.recordedAt,
           );

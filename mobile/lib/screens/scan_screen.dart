@@ -5,31 +5,30 @@ import 'package:flutter/services.dart';
 import 'package:mobile_scanner/mobile_scanner.dart';
 
 import '../api.dart';
-import '../reservation.dart';
+import '../scan_session.dart';
 import '../ui.dart';
 import 'product_info_screen.dart';
 import 'quantity_screen.dart';
-import 'reservation_screen.dart';
+import 'session_screen.dart';
 
 /// Langkah 2: scan QR barang. Kamera dimatikan selama barang dicek dan
 /// selama layar lain (jumlah, reservasi, hasil) menutupinya, lalu menyala
 /// lagi saat layar ini terlihat kembali.
 class ScanScreen extends StatefulWidget {
   /// [mode] null = Cek Barang: scan hanya untuk melihat detail barang.
-  /// [session] = sesi reservasi barang keluar (no reservasi + total item).
+  /// [session] = sesi scan: barang keluar per no reservasi / barang masuk per kode masuk.
   const ScanScreen({super.key, required this.api, required this.mode, this.session});
 
   static const routeName = '/scan';
   final ApiClient api;
   final Mode? mode;
-  final ReservationSession? session;
+  final ScanSession? session;
 
   @override
   State<ScanScreen> createState() => _ScanScreenState();
 }
 
-class _ScanScreenState extends State<ScanScreen>
-    with WidgetsBindingObserver, RouteAware {
+class _ScanScreenState extends State<ScanScreen> with WidgetsBindingObserver, RouteAware {
   final _controller = MobileScannerController(autoStart: false);
   StreamSubscription<BarcodeCapture>? _subscription;
   // true selama QR diproses atau layar lain menutupi: abaikan hasil scan baru.
@@ -159,9 +158,8 @@ class _ScanScreenState extends State<ScanScreen>
 
   /// Cek Barang: tampilkan detail; saat server tidak terjangkau pakai data di HP.
   Future<void> _openInfo(String token) async {
-    void open(ProductInfoScreen screen) => unawaited(
-      Navigator.of(context).push(MaterialPageRoute<void>(builder: (_) => screen)),
-    );
+    void open(ProductInfoScreen screen) =>
+        unawaited(Navigator.of(context).push(MaterialPageRoute<void>(builder: (_) => screen)));
     try {
       final info = await widget.api.productInfo(token);
       if (!mounted) return;
@@ -187,14 +185,10 @@ class _ScanScreenState extends State<ScanScreen>
   }
 
   void _openQuantity(String token, Product product, {bool offline = false}) {
-    final session = widget.session;
-    if (session != null && session.has(product.id)) {
-      // Satu barang hanya sekali per reservasi (server juga menolaknya).
+    final rejected = widget.session?.reject(product);
+    if (rejected != null) {
       unawaited(HapticFeedback.heavyImpact());
-      setState(
-        () => _error = 'Barang ${product.sku} sudah diambil untuk reservasi '
-            '${session.number}. Scan barang lain.',
-      );
+      setState(() => _error = rejected);
       return;
     }
     // Kamera menyala lagi lewat didPopNext saat layar ini terlihat kembali.
@@ -240,7 +234,7 @@ class _ScanScreenState extends State<ScanScreen>
           mode == null
               ? 'Cek Barang'
               : widget.session != null
-              ? '${mode.code} · ${widget.session!.number}'
+              ? '${mode.code} · ${widget.session!.code}'
               : '${mode.code} · ${mode.label}',
         ),
         actions: [
@@ -248,9 +242,7 @@ class _ScanScreenState extends State<ScanScreen>
             valueListenable: _controller,
             builder: (context, state, _) => IconButton(
               tooltip: 'Senter',
-              icon: Icon(
-                state.torchState == TorchState.on ? Icons.flash_on : Icons.flash_off,
-              ),
+              icon: Icon(state.torchState == TorchState.on ? Icons.flash_on : Icons.flash_off),
               onPressed: state.isRunning ? _controller.toggleTorch : null,
             ),
           ),
@@ -289,15 +281,14 @@ class _ScanScreenState extends State<ScanScreen>
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           Text(
-            'Semua ${session.total} barang reservasi ${session.number} sudah diambil.',
+            'Semua ${session.total} barang ${session.mode.sessionLabel.toLowerCase()} '
+            '${session.code} sudah ${session.mode.sessionVerb}.',
             textAlign: TextAlign.center,
             style: const TextStyle(fontSize: 15, fontWeight: FontWeight.bold),
           ),
           const SizedBox(height: 12),
           FilledButton(
-            onPressed: () => Navigator.of(context).popUntil(
-              ModalRoute.withName(ReservationScreen.routeName),
-            ),
+            onPressed: () => Navigator.of(context).popUntil(ModalRoute.withName(SessionScreen.routeName)),
             style: FilledButton.styleFrom(backgroundColor: brandGreen, minimumSize: const Size.fromHeight(50)),
             child: const Text('Lihat ringkasan'),
           ),
@@ -319,10 +310,7 @@ class _ScanScreenState extends State<ScanScreen>
           const SizedBox(height: 16),
           FilledButton.icon(
             onPressed: _retry,
-            style: FilledButton.styleFrom(
-              backgroundColor: color,
-              minimumSize: const Size.fromHeight(50),
-            ),
+            style: FilledButton.styleFrom(backgroundColor: color, minimumSize: const Size.fromHeight(50)),
             icon: const Icon(Icons.qr_code_scanner),
             label: const Text('Scan ulang'),
           ),
@@ -342,11 +330,13 @@ class _ScanScreenState extends State<ScanScreen>
     return Text(
       widget.mode == null
           ? 'Arahkan kamera ke label QR untuk melihat detail barang.'
+          : session != null
+          ? 'Barang ke-${session.taken + 1} dari ${session.total} · '
+                '${session.mode.sessionLabel.toLowerCase()} ${session.code}\n'
+                'Arahkan kamera ke label QR barang yang '
+                '${session.mode == Mode.inbound ? 'masuk' : 'akan diambil'}.'
           : widget.mode == Mode.inbound
           ? 'Arahkan kamera ke label QR barang yang masuk.'
-          : session != null
-          ? 'Barang ke-${session.taken + 1} dari ${session.total} · reservasi ${session.number}\n'
-                'Arahkan kamera ke label QR barang yang akan diambil.'
           : 'Arahkan kamera ke label QR barang yang akan diambil.',
       key: const Key('scan-hint'),
       textAlign: TextAlign.center,
@@ -399,7 +389,11 @@ class _CameraError extends StatelessWidget {
             children: [
               const Icon(Icons.no_photography_outlined, color: Colors.white, size: 48),
               const SizedBox(height: 12),
-              Text(message, textAlign: TextAlign.center, style: const TextStyle(color: Colors.white)),
+              Text(
+                message,
+                textAlign: TextAlign.center,
+                style: const TextStyle(color: Colors.white),
+              ),
               const SizedBox(height: 16),
               OutlinedButton(
                 onPressed: onRetry,

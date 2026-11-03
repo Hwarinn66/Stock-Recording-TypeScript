@@ -6,8 +6,8 @@ import '../api.dart';
 import '../offline.dart';
 import '../ui.dart';
 import 'queue_screen.dart';
-import 'reservation_screen.dart';
 import 'scan_screen.dart';
+import 'session_screen.dart';
 
 /// Langkah 1: pilih IN (barang masuk) atau OUT (barang keluar). Selama menu ini
 /// ada di tumpukan, antrean offline dikirim otomatis dan daftar barang di HP diperbarui.
@@ -158,7 +158,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                     child: _ModeButton(
                       mode: Mode.inbound,
                       icon: Icons.south,
-                      subtitle: 'Scan barang lalu isi jumlah yang masuk',
+                      subtitle: 'Isi kode masuk & total item, lalu scan barang',
                       onTap: () => _open(context, Mode.inbound),
                     ),
                   ),
@@ -211,10 +211,10 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   }
 
   void _open(BuildContext context, Mode? mode) {
-    if (mode == Mode.outbound) {
-      // Barang keluar: no reservasi & total item sekali, lalu scan satu per satu.
+    if (mode != null) {
+      // Barang keluar: no reservasi; barang masuk: kode masuk. Total item sekali, lalu scan satu per satu.
       Navigator.of(context).push(
-        MaterialPageRoute<void>(builder: (_) => ReservationStartScreen(api: api)),
+        MaterialPageRoute<void>(builder: (_) => SessionStartScreen(api: api, mode: mode)),
       );
       return;
     }

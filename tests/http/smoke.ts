@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import bcrypt from "bcryptjs";
 import { db, execute, rows } from "../../src/lib/db";
+import { isAtkCategory } from "../../src/lib/in-code";
 if (!process.env.DB_NAME?.endsWith("_test"))
   throw new Error("HTTP smoke tests require *_test database");
 const base = process.env.TEST_BASE_URL || "http://127.0.0.1:3000";
@@ -391,6 +392,62 @@ try {
     [[product.sku, true]],
   );
   assert.equal((await request("reservation-history/0000001")).status, 404);
+  // Sesi kode masuk (HP 1.4.0): sama seperti reservasi untuk barang masuk; kode masuk
+  // ATK (ATK.111.22.33) hanya untuk barang ATK, kode lain hanya barang bukan ATK.
+  const atk = isAtkCategory(product.category_name);
+  const digits = String(Date.now()).slice(-7);
+  const inCode = (atk ? "ATK." : "") + `${digits.slice(0, 3)}.${digits.slice(3, 5)}.${digits.slice(5)}`;
+  const otherKind = atk ? inCode.slice(4) : "ATK." + inCode;
+  assert.equal((await mobile(`receipts/${inCode}`)).status, 404);
+  assert.equal((await mobile("receipts/12x")).status, 422);
+  const receipt = await (
+    await mobile("receipts", "POST", { in_code: inCode, total_items: 1 })
+  ).json();
+  assert.deepEqual([receipt.data.in_code, receipt.data.status, receipt.data.items], [inCode, "OPEN", []]);
+  assert.equal(
+    (await mobile("receipts", "POST", { in_code: inCode, total_items: 1 })).status,
+    409,
+  );
+  const receive = { qr_token, mode: "IN", quantity: 3, in_code: inCode, receipt_total: 1 };
+  const received = await (await mobile("transactions", "POST", receive)).json();
+  assert.equal(received.data.stock_after, received.data.stock_before + 3);
+  assert.deepEqual(received.data.receipt, {
+    in_code: inCode,
+    total_items: 1,
+    taken: 1,
+    status: "DONE",
+  });
+  assert.equal(received.data.reservation, null);
+  const again = await mobile("transactions", "POST", receive);
+  assert.equal(again.status, 409);
+  assert.equal((await again.json()).code, "RECEIPT_DUPLICATE");
+  const mismatch = await mobile("transactions", "POST", { ...receive, in_code: otherKind });
+  assert.equal(mismatch.status, 422);
+  assert.equal((await mismatch.json()).code, "RECEIPT_KIND_MISMATCH");
+  assert.equal(
+    (await mobile("transactions", "POST", { ...receive, mode: "OUT", reservation_number: "1234567" })).status,
+    422,
+    "barang keluar tidak memakai sesi kode masuk",
+  );
+  const widened = await (
+    await mobile(`receipts/${inCode}`, "PATCH", { total_items: 2 })
+  ).json();
+  assert.deepEqual([widened.data.status, widened.data.taken], ["OPEN", 1]);
+  const receiptList = await (
+    await request(`receipt-history?status=OPEN&q=${encodeURIComponent(inCode)}`)
+  ).json();
+  assert.deepEqual(
+    [receiptList.data.items[0].in_code, receiptList.data.items[0].taken, receiptList.data.items[0].actors],
+    [inCode, 1, username],
+  );
+  const receiptDetail = await (
+    await request(`receipt-history/${inCode}`)
+  ).json();
+  assert.deepEqual(
+    receiptDetail.data.items.map((i: { sku: string; in_session: boolean }) => [i.sku, i.in_session]),
+    [[product.sku, true]],
+  );
+  assert.equal((await request("receipt-history/000.00.01")).status, 404);
   for (const path of ["/", "/reservations"]) {
     const page = await fetch(base + path, { headers: { Cookie: cookie } });
     assert.equal(page.status, 200, path);
@@ -400,7 +457,7 @@ try {
   await request("auth/logout", "POST", {});
   assert.equal((await request("products")).status, 401);
   console.log(
-    "PASS: authenticated HTTP API, CSRF, validation, QR SVG, scan → SSE → quantity → approve → stock/history/CSV, mobile lookup → record + reservation, reservation sessions, session revocation.",
+    "PASS: authenticated HTTP API, CSRF, validation, QR SVG, scan → SSE → quantity → approve → stock/history/CSV, mobile lookup → record + reservation, reservation & receipt sessions, session revocation.",
   );
 } finally {
   await db.end();
